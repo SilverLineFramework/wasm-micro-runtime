@@ -185,13 +185,13 @@ get_current_memory_size(wasm_exec_env_t exec_env)
 {
     wasm_module_inst_t module_inst = get_module_inst(exec_env);
     wasm_function_inst_t memorysize_fn =
-        wasm_runtime_lookup_function(module_inst, "wasm_memory_size");
+        wasm_runtime_lookup_function(module_inst, "__wasm_memory_size");
     uint32_t cur_wasm_pages[1];
     uint32_t mem_size = 0;
     if (memorysize_fn
         && wasm_runtime_call_wasm(exec_env, memorysize_fn, 0, cur_wasm_pages)) {
         // Success
-        VB("Used \'wasm_memory_size\' export for size query");
+        VB("Used \'__wasm_memory_size\' export for size query");
         mem_size = cur_wasm_pages[0] * WASM_PAGESIZE;
     }
     else {
@@ -209,13 +209,13 @@ grow_memory_size(wasm_exec_env_t exec_env, uint32_t inc_wasm_pages)
 {
     wasm_module_inst_t module_inst = get_module_inst(exec_env);
     wasm_function_inst_t memorygrow_fn =
-        wasm_runtime_lookup_function(module_inst, "wasm_memory_grow");
+        wasm_runtime_lookup_function(module_inst, "__wasm_memory_grow");
     uint32_t prev_wasm_pages[1] = { inc_wasm_pages };
     if (memorygrow_fn
         && wasm_runtime_call_wasm(exec_env, memorygrow_fn, 1,
                                   prev_wasm_pages)) {
         // Success
-        VB("Used \'wasm_memory_grow\' export for grow query");
+        VB("Used \'__wasm_memory_grow\' export for grow query");
     }
     else {
         // Failure: Fallback to internal implementation
