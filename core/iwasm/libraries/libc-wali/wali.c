@@ -2133,7 +2133,8 @@ wali_init(wasm_exec_env_t exec_env)
 {
     PC(__init);
     if (init_called) {
-        ERR("__init has already been invoked once for the instance; do not re-invoke");
+        ERR("__init has already been invoked once for the instance; do not "
+            "re-invoke");
     }
     init_called = true;
     // WAMR engine interfacing
@@ -2145,7 +2146,8 @@ wali_deinit(wasm_exec_env_t exec_env)
 {
     PC(__deinit);
     if (deinit_called) {
-        ERR("__deinit has already been invoked once for the instance; do not re-invoke");
+        ERR("__deinit has already been invoked once for the instance; do not "
+            "re-invoke");
     }
     deinit_called = true;
 }
