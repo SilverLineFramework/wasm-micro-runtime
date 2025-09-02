@@ -2125,22 +2125,29 @@ wali_siglongjmp(wasm_exec_env_t exec_env, int sigjmp_buf_addr, int val)
 }
 
 /***** Startup *****/
-static bool ctor_called = false;
-static bool dtor_called = false;
+static bool init_called = false;
+static bool deinit_called = false;
 
 void
-wali_call_ctors(wasm_exec_env_t exec_env)
+wali_init(wasm_exec_env_t exec_env)
 {
-    PC(wali_call_ctors);
+    PC(__init);
+    if (init_called) {
+        ERR("__init has already been invoked once for the instance; do not re-invoke");
+    }
+    init_called = true;
+    // WAMR engine interfacing
     invoked_wali = true;
-    ctor_called = true;
 }
 
 void
-wali_call_dtors(wasm_exec_env_t exec_env)
+wali_deinit(wasm_exec_env_t exec_env)
 {
-    PC(wali_call_dtors);
-    dtor_called = true;
+    PC(__deinit);
+    if (deinit_called) {
+        ERR("__deinit has already been invoked once for the instance; do not re-invoke");
+    }
+    deinit_called = true;
 }
 
 void
@@ -2152,9 +2159,9 @@ wali_proc_exit(wasm_exec_env_t exec_env, long v)
 #endif
     wasm_module_inst_t module_inst = get_module_inst(exec_env);
     WALIContext *wali_ctx = wasm_runtime_get_wali_ctx(module_inst);
-    /* if destructor is invoked, main ended successfully, do
+    /* if wali_deinit is invoked, main ended successfully, do
      * not set exception */
-    if (!dtor_called || v) {
+    if (!deinit_called || v) {
         VB("WALI process exit called prematurely");
         wasm_runtime_set_exception(module_inst, "wali proc exit");
     }
@@ -2519,8 +2526,8 @@ static NativeSymbol wali_native_symbols[] = {
     NSYMBOL(__wasm_thread_spawn, wali_wasm_thread_spawn, "(ii)i"),
 
     // Startup
-    NSYMBOL(__call_ctors, wali_call_ctors, "()"),
-    NSYMBOL(__call_dtors, wali_call_dtors, "()"),
+    NSYMBOL(__init, wali_init, "()"),
+    NSYMBOL(__deinit, wali_deinit, "()"),
     NSYMBOL(__proc_exit, wali_proc_exit, "(i)"),
     NSYMBOL(__cl_get_argc, wali_cl_get_argc, "()i"),
     NSYMBOL(__cl_get_argv_len, wali_cl_get_argv_len, "(i)i"),
