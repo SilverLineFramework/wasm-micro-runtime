@@ -2128,28 +2128,32 @@ wali_siglongjmp(wasm_exec_env_t exec_env, int sigjmp_buf_addr, int val)
 static bool init_called = false;
 static bool deinit_called = false;
 
-void
+int
 wali_init(wasm_exec_env_t exec_env)
 {
     PC(__init);
     if (init_called) {
         ERR("__init has already been invoked once for the instance; do not "
             "re-invoke");
+        return 1;
     }
     init_called = true;
     // WAMR engine interfacing
     invoked_wali = true;
+    return 0;
 }
 
-void
+int
 wali_deinit(wasm_exec_env_t exec_env)
 {
     PC(__deinit);
     if (deinit_called) {
         ERR("__deinit has already been invoked once for the instance; do not "
             "re-invoke");
+        return 1;
     }
     deinit_called = true;
+    return 0;
 }
 
 void
@@ -2528,8 +2532,8 @@ static NativeSymbol wali_native_symbols[] = {
     NSYMBOL(__wasm_thread_spawn, wali_wasm_thread_spawn, "(ii)i"),
 
     // Startup
-    NSYMBOL(__init, wali_init, "()"),
-    NSYMBOL(__deinit, wali_deinit, "()"),
+    NSYMBOL(__init, wali_init, "()i"),
+    NSYMBOL(__deinit, wali_deinit, "()i"),
     NSYMBOL(__proc_exit, wali_proc_exit, "(i)"),
     NSYMBOL(__cl_get_argc, wali_cl_get_argc, "()i"),
     NSYMBOL(__cl_get_argv_len, wali_cl_get_argv_len, "(i)i"),
