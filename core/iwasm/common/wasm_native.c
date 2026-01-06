@@ -22,6 +22,10 @@ static NativeSymbolsList g_native_symbols_list = NULL;
 static void *g_wasi_context_key;
 #endif /* WASM_ENABLE_LIBC_WASI */
 
+#if WASM_ENABLE_LIBC_WALI != 0
+static void *g_wali_context_key;
+#endif /* WASM_ENABLE_LIBC_WALI */
+
 uint32
 get_libc_builtin_export_apis(NativeSymbol **p_libc_builtin_apis);
 
@@ -471,6 +475,29 @@ wasi_context_dtor(WASMModuleInstanceCommon *inst, void *ctx)
 }
 #endif /* end of WASM_ENABLE_LIBC_WASI */
 
+#if WASM_ENABLE_LIBC_WALI != 0
+WALIContext *
+wasm_runtime_get_wali_ctx(WASMModuleInstanceCommon *module_inst_comm)
+{
+    return wasm_native_get_context(module_inst_comm, g_wali_context_key);
+}
+
+void wasm_runtime_set_wali_ctx(WASMModuleInstanceCommon *module_inst_comm,
+                          WALIContext *wali_ctx)
+{
+    wasm_native_set_context(module_inst_comm, g_wali_context_key, wali_ctx);
+}
+
+static void
+wali_context_dtor(WASMModuleInstanceCommon *inst, void *ctx)
+{
+    if (ctx == NULL) {
+        return;
+    }
+    wasm_runtime_destroy_wali(inst);
+}
+#endif /* end of WASM_ENABLE_LIBC_WALI */
+
 #if WASM_ENABLE_QUICK_AOT_ENTRY != 0
 static bool
 quick_aot_entry_init();
@@ -516,6 +543,10 @@ wasm_native_init()
 #endif
 
 #if WASM_ENABLE_LIBC_WALI != 0
+    g_wali_context_key = wasm_native_create_context_key(wali_context_dtor);
+    if (g_wali_context_key == NULL) {
+        goto fail;
+    }
     n_native_symbols = get_libc_wali_export_apis(&native_symbols);
     if (!wasm_native_register_natives("wali", native_symbols, n_native_symbols))
         goto fail;

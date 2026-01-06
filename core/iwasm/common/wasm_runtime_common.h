@@ -1008,9 +1008,22 @@ wasm_runtime_set_wasi_ns_lookup_pool(wasm_module_t module,
 WALIContext *
 wasm_runtime_get_wali_ctx(WASMModuleInstanceCommon *module_inst_comm);
 
+void
+wasm_runtime_set_wali_ctx(WASMModuleInstanceCommon *module_inst,
+                          WALIContext *wali_ctx);
+
 /* See wasm_export.h for description */
 WASM_RUNTIME_API_EXTERN uint32_t
 wasm_runtime_get_wali_exit_code(WASMModuleInstanceCommon *module_inst);
+
+bool
+wasm_runtime_init_wali(WASMModuleInstanceCommon *module_inst,
+                       char *error_buf, uint32 error_buf_size);
+
+
+void
+wasm_runtime_destroy_wali(WASMModuleInstanceCommon *module_inst);
+
 #endif /* end of WASM_ENABLE_LIBC_WALI */
 
 #if WASM_ENABLE_GC != 0

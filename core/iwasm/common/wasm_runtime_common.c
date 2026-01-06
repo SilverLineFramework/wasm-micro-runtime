@@ -3751,17 +3751,6 @@ wasm_runtime_get_wasi_exit_code(WASMModuleInstanceCommon *module_inst)
 #endif /* end of WASM_ENABLE_LIBC_WASI */
 
 #if WASM_ENABLE_LIBC_WALI
-
-WALIContext *
-wasm_runtime_get_wali_ctx(WASMModuleInstanceCommon *module_inst_comm)
-{
-    WASMModuleInstance *module_inst = (WASMModuleInstance *)module_inst_comm;
-
-    bh_assert(module_inst_comm->module_type == Wasm_Module_Bytecode
-              || module_inst_comm->module_type == Wasm_Module_AoT);
-    return &module_inst->wali_ctx;
-}
-
 uint32_t
 wasm_runtime_get_wali_exit_code(WASMModuleInstanceCommon *module_inst)
 {
@@ -3783,6 +3772,29 @@ wasm_runtime_get_wali_exit_code(WASMModuleInstanceCommon *module_inst)
 #endif
     return wali_ctx->exit_code;
 }
+
+void
+wasm_runtime_destroy_wali(WASMModuleInstanceCommon *module_inst)
+{
+    WALIContext *wali_ctx = wasm_runtime_get_wali_ctx(module_inst);
+    if (wali_ctx) {
+        wasm_runtime_free(wali_ctx);
+    }
+}
+
+bool
+wasm_runtime_init_wali(WASMModuleInstanceCommon *module_inst,
+                      char *error_buf, uint32 error_buf_size) {
+    WALIContext *wali_ctx;
+    if (!(wali_ctx = runtime_malloc(sizeof(WALIContext), NULL, error_buf,
+                                    error_buf_size))) {
+        return false;
+    }
+
+    wasm_runtime_set_wali_ctx(module_inst, wali_ctx);
+    return true;
+}
+
 #endif /* end of WASM_ENABLE_LIBC_WALI */
 
 WASMModuleCommon *

@@ -2782,6 +2782,11 @@ wasm_instantiate(WASMModule *module, WASMModuleInstance *parent,
                 error_buf, error_buf_size)) {
             goto fail;
         }
+        if (!wasm_runtime_init_wali(
+                (WASMModuleInstanceCommon *)module_inst, error_buf,
+                error_buf_size)) {
+            goto fail;
+        }
     }
 #endif
 
