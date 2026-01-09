@@ -450,8 +450,8 @@ wali_syscall_stat(wasm_exec_env_t exec_env, long a1, long a2)
 #if __x86_64__
     RETURN(__syscall2(SYS_stat, MADDR(a1), MADDR(a2)), "stat", 2, a1, a2);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_fstatat(exec_env, AT_FDCWD, a1, a2, 0), "stat", 2, a1,
-           a2);
+    RETURN(wali_syscall_newfstatat(exec_env, AT_FDCWD, a1, a2, 0), "stat", 2,
+           a1, a2);
 #endif
 }
 
@@ -471,9 +471,9 @@ wali_syscall_lstat(wasm_exec_env_t exec_env, long a1, long a2)
 #if __x86_64__
     RETURN(__syscall2(SYS_lstat, MADDR(a1), MADDR(a2)), "lstat", 2, a1, a2);
 #elif __aarch64__ || __riscv64__
-    RETURN(
-        wali_syscall_fstatat(exec_env, AT_FDCWD, a1, a2, AT_SYMLINK_NOFOLLOW),
-        "lstat", 2, a1, a2);
+    RETURN(wali_syscall_newfstatat(exec_env, AT_FDCWD, a1, a2,
+                                   AT_SYMLINK_NOFOLLOW),
+           "lstat", 2, a1, a2);
 #endif
 }
 
@@ -1255,20 +1255,6 @@ wali_syscall_ftruncate(wasm_exec_env_t exec_env, long a1, long a2)
     RETURN(__syscall2(SYS_ftruncate, a1, a2), "ftruncate", 2, a1, a2);
 }
 
-// 78
-long
-wali_syscall_getdents(wasm_exec_env_t exec_env, long a1, long a2, long a3)
-{
-    SC(78, getdents);
-    FATALSC(getdents, "Not going to support this legacy call; use getdents64");
-#if __x86_64__
-    RETURN(__syscall3(SYS_getdents, a1, MADDR(a2), a3), "getdents", 3, a1, a2,
-           a3);
-#elif __aarch64__ || __riscv64__
-    RETURN(-1, "getdents", 3, a1, a2, a3);
-#endif
-}
-
 // 79
 long
 wali_syscall_getcwd(wasm_exec_env_t exec_env, long a1, long a2)
@@ -1432,6 +1418,15 @@ wali_syscall_umask(wasm_exec_env_t exec_env, long a1)
 {
     SC(95, umask);
     RETURN(__syscall1(SYS_umask, a1), "umask", 1, a1);
+}
+
+// 96
+long
+wali_syscall_gettimeofday(wasm_exec_env_t exec_env, long a1, long a2)
+{
+    SC(96, gettimeofday);
+    RETURN(__syscall2(SYS_gettimeofday, MADDR(a1), MADDR(a2)), "gettimeofday",
+           2, a1, a2);
 }
 
 // 97
@@ -1836,19 +1831,19 @@ wali_syscall_fchownat(wasm_exec_env_t exec_env, long a1, long a2, long a3,
 
 // 262
 long
-wali_syscall_fstatat(wasm_exec_env_t exec_env, long a1, long a2, long a3,
-                     long a4)
+wali_syscall_newfstatat(wasm_exec_env_t exec_env, long a1, long a2, long a3,
+                        long a4)
 {
-    SC(262, fstatat);
+    SC(262, newfstatat);
 #if __x86_64__
-    RETURN(__syscall4(SYS_newfstatat, a1, MADDR(a2), MADDR(a3), a4), "fstatat",
-           4, a1, a2, a3, a4);
+    RETURN(__syscall4(SYS_newfstatat, a1, MADDR(a2), MADDR(a3), a4),
+           "newfstatat", 4, a1, a2, a3, a4);
 #elif __aarch64__ || __riscv64__
     Addr wasm_stat = MADDR(a3);
     struct stat sb;
     long retval = __syscall4(SYS_newfstatat, a1, MADDR(a2), &sb, a4);
     copy2wasm_stat_struct(exec_env, wasm_stat, &sb);
-    RETURN(retval, "fstatat", 4, a1, a2, a3, a4);
+    RETURN(retval, "newfstatat", 4, a1, a2, a3, a4);
 #endif
 }
 
@@ -2443,7 +2438,6 @@ static NativeSymbol wali_native_symbols[] = {
     NSYMBOL(SYS_fsync, wali_syscall_fsync, "(i)I"),
     NSYMBOL(SYS_fdatasync, wali_syscall_fdatasync, "(i)I"),
     NSYMBOL(SYS_ftruncate, wali_syscall_ftruncate, "(iI)I"),
-    NSYMBOL(SYS_getdents, wali_syscall_getdents, "(iii)I"),
     NSYMBOL(SYS_getcwd, wali_syscall_getcwd, "(ii)I"),
     NSYMBOL(SYS_chdir, wali_syscall_chdir, "(i)I"),
     NSYMBOL(SYS_fchdir, wali_syscall_fchdir, "(i)I"),
@@ -2459,6 +2453,7 @@ static NativeSymbol wali_native_symbols[] = {
     NSYMBOL(SYS_chown, wali_syscall_chown, "(iii)I"),
     NSYMBOL(SYS_fchown, wali_syscall_fchown, "(iii)I"),
     NSYMBOL(SYS_umask, wali_syscall_umask, "(i)I"),
+    NSYMBOL(SYS_gettimeofday, wali_syscall_gettimeofday, "(ii)I"),
     NSYMBOL(SYS_getrlimit, wali_syscall_getrlimit, "(ii)I"),
     NSYMBOL(SYS_getrusage, wali_syscall_getrusage, "(ii)I"),
     NSYMBOL(SYS_sysinfo, wali_syscall_sysinfo, "(i)I"),
@@ -2503,7 +2498,7 @@ static NativeSymbol wali_native_symbols[] = {
     NSYMBOL(SYS_openat, wali_syscall_openat, "(iiii)I"),
     NSYMBOL(SYS_mkdirat, wali_syscall_mkdirat, "(iii)I"),
     NSYMBOL(SYS_fchownat, wali_syscall_fchownat, "(iiiii)I"),
-    NSYMBOL(SYS_fstatat, wali_syscall_fstatat, "(iiii)I"),
+    NSYMBOL(SYS_newfstatat, wali_syscall_newfstatat, "(iiii)I"),
     NSYMBOL(SYS_unlinkat, wali_syscall_unlinkat, "(iii)I"),
     NSYMBOL(SYS_linkat, wali_syscall_linkat, "(iiiii)I"),
     NSYMBOL(SYS_symlinkat, wali_syscall_symlinkat, "(iii)I"),

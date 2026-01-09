@@ -147,33 +147,19 @@ wali_syscall_mremap(wasm_exec_env_t exec_env, long a1, long a2, long a3,
 long
 wali_syscall_msync(wasm_exec_env_t exec_env, long a1, long a2, long a3);
 long
-wali_syscall_mincore(wasm_exec_env_t exec_env);
-long
 wali_syscall_madvise(wasm_exec_env_t exec_env, long a1, long a2, long a3);
-long
-wali_syscall_shmget(wasm_exec_env_t exec_env);
-long
-wali_syscall_shmat(wasm_exec_env_t exec_env);
-long
-wali_syscall_shmctl(wasm_exec_env_t exec_env);
 long
 wali_syscall_dup(wasm_exec_env_t exec_env, long a1);
 long
 wali_syscall_dup2(wasm_exec_env_t exec_env, long a1, long a2);
 long
-wali_syscall_pause(wasm_exec_env_t exec_env);
-long
 wali_syscall_nanosleep(wasm_exec_env_t exec_env, long a1, long a2);
-long
-wali_syscall_getitimer(wasm_exec_env_t exec_env);
 long
 wali_syscall_alarm(wasm_exec_env_t exec_env, long a1);
 long
 wali_syscall_setitimer(wasm_exec_env_t exec_env, long a1, long a2, long a3);
 long
 wali_syscall_getpid(wasm_exec_env_t exec_env);
-long
-wali_syscall_sendfile(wasm_exec_env_t exec_env);
 long
 wali_syscall_socket(wasm_exec_env_t exec_env, long a1, long a2, long a3);
 long
@@ -210,11 +196,7 @@ long
 wali_syscall_getsockopt(wasm_exec_env_t exec_env, long a1, long a2, long a3,
                         long a4, long a5);
 long
-wali_syscall_clone(wasm_exec_env_t exec_env);
-long
 wali_syscall_fork(wasm_exec_env_t exec_env);
-long
-wali_syscall_vfork(wasm_exec_env_t exec_env);
 long
 wali_syscall_execve(wasm_exec_env_t exec_env, long a1, long a2, long a3);
 long
@@ -227,22 +209,6 @@ wali_syscall_kill(wasm_exec_env_t exec_env, long a1, long a2);
 long
 wali_syscall_uname(wasm_exec_env_t exec_env, long a1);
 long
-wali_syscall_semget(wasm_exec_env_t exec_env);
-long
-wali_syscall_semop(wasm_exec_env_t exec_env);
-long
-wali_syscall_semctl(wasm_exec_env_t exec_env);
-long
-wali_syscall_shmdt(wasm_exec_env_t exec_env);
-long
-wali_syscall_msgget(wasm_exec_env_t exec_env);
-long
-wali_syscall_msgsnd(wasm_exec_env_t exec_env);
-long
-wali_syscall_msgrcv(wasm_exec_env_t exec_env);
-long
-wali_syscall_msgctl(wasm_exec_env_t exec_env);
-long
 wali_syscall_fcntl(wasm_exec_env_t exec_env, long a1, long a2, long a3);
 long
 wali_syscall_flock(wasm_exec_env_t exec_env, long a1, long a2);
@@ -251,11 +217,7 @@ wali_syscall_fsync(wasm_exec_env_t exec_env, long a1);
 long
 wali_syscall_fdatasync(wasm_exec_env_t exec_env, long a1);
 long
-wali_syscall_truncate(wasm_exec_env_t exec_env);
-long
 wali_syscall_ftruncate(wasm_exec_env_t exec_env, long a1, long a2);
-long
-wali_syscall_getdents(wasm_exec_env_t exec_env, long a1, long a2, long a3);
 long
 wali_syscall_getcwd(wasm_exec_env_t exec_env, long a1, long a2);
 long
@@ -268,8 +230,6 @@ long
 wali_syscall_mkdir(wasm_exec_env_t exec_env, long a1, long a2);
 long
 wali_syscall_rmdir(wasm_exec_env_t exec_env, long a1);
-long
-wali_syscall_creat(wasm_exec_env_t exec_env);
 long
 wali_syscall_link(wasm_exec_env_t exec_env, long a1, long a2);
 long
@@ -287,11 +247,9 @@ wali_syscall_chown(wasm_exec_env_t exec_env, long a1, long a2, long a3);
 long
 wali_syscall_fchown(wasm_exec_env_t exec_env, long a1, long a2, long a3);
 long
-wali_syscall_lchown(wasm_exec_env_t exec_env);
-long
 wali_syscall_umask(wasm_exec_env_t exec_env, long a1);
 long
-wali_syscall_gettimeofday(wasm_exec_env_t exec_env);
+wali_syscall_gettimeofday(wasm_exec_env_t exec_env, long a1, long a2);
 long
 wali_syscall_getrlimit(wasm_exec_env_t exec_env, long a1, long a2);
 long
@@ -299,13 +257,7 @@ wali_syscall_getrusage(wasm_exec_env_t exec_env, long a1, long a2);
 long
 wali_syscall_sysinfo(wasm_exec_env_t exec_env, long a1);
 long
-wali_syscall_times(wasm_exec_env_t exec_env);
-long
-wali_syscall_ptrace(wasm_exec_env_t exec_env);
-long
 wali_syscall_getuid(wasm_exec_env_t exec_env);
-long
-wali_syscall_syslog(wasm_exec_env_t exec_env);
 long
 wali_syscall_getgid(wasm_exec_env_t exec_env);
 long
@@ -321,8 +273,6 @@ wali_syscall_setpgid(wasm_exec_env_t exec_env, long a1, long a2);
 long
 wali_syscall_getppid(wasm_exec_env_t exec_env);
 long
-wali_syscall_getpgrp(wasm_exec_env_t exec_env);
-long
 wali_syscall_setsid(wasm_exec_env_t exec_env);
 long
 wali_syscall_setreuid(wasm_exec_env_t exec_env, long a1, long a2);
@@ -335,29 +285,13 @@ wali_syscall_setgroups(wasm_exec_env_t exec_env, long a1, long a2);
 long
 wali_syscall_setresuid(wasm_exec_env_t exec_env, long a1, long a2, long a3);
 long
-wali_syscall_getresuid(wasm_exec_env_t exec_env);
-long
 wali_syscall_setresgid(wasm_exec_env_t exec_env, long a1, long a2, long a3);
-long
-wali_syscall_getresgid(wasm_exec_env_t exec_env);
 long
 wali_syscall_getpgid(wasm_exec_env_t exec_env, long a1);
 long
-wali_syscall_setfsuid(wasm_exec_env_t exec_env);
-long
-wali_syscall_setfsgid(wasm_exec_env_t exec_env);
-long
 wali_syscall_getsid(wasm_exec_env_t exec_env, long a1);
 long
-wali_syscall_capget(wasm_exec_env_t exec_env);
-long
-wali_syscall_capset(wasm_exec_env_t exec_env);
-long
 wali_syscall_rt_sigpending(wasm_exec_env_t exec_env, long a1, long a2);
-long
-wali_syscall_rt_sigtimedwait(wasm_exec_env_t exec_env);
-long
-wali_syscall_rt_sigqueueinfo(wasm_exec_env_t exec_env);
 long
 wali_syscall_rt_sigsuspend(wasm_exec_env_t exec_env, long a1, long a2);
 long
@@ -365,199 +299,33 @@ wali_syscall_sigaltstack(wasm_exec_env_t exec_env, long a1, long a2);
 long
 wali_syscall_utime(wasm_exec_env_t exec_env, long a1, long a2);
 long
-wali_syscall_mknod(wasm_exec_env_t exec_env);
-long
-wali_syscall_uselib(wasm_exec_env_t exec_env);
-long
-wali_syscall_personality(wasm_exec_env_t exec_env);
-long
-wali_syscall_ustat(wasm_exec_env_t exec_env);
-long
 wali_syscall_statfs(wasm_exec_env_t exec_env, long a1, long a2);
 long
 wali_syscall_fstatfs(wasm_exec_env_t exec_env, long a1, long a2);
 long
-wali_syscall_sysfs(wasm_exec_env_t exec_env);
-long
-wali_syscall_getpriority(wasm_exec_env_t exec_env);
-long
-wali_syscall_setpriority(wasm_exec_env_t exec_env);
-long
-wali_syscall_sched_setparam(wasm_exec_env_t exec_env);
-long
-wali_syscall_sched_getparam(wasm_exec_env_t exec_env);
-long
-wali_syscall_sched_setscheduler(wasm_exec_env_t exec_env);
-long
-wali_syscall_sched_getscheduler(wasm_exec_env_t exec_env);
-long
-wali_syscall_sched_get_priority_max(wasm_exec_env_t exec_env);
-long
-wali_syscall_sched_get_priority_min(wasm_exec_env_t exec_env);
-long
-wali_syscall_sched_rr_get_interval(wasm_exec_env_t exec_env);
-long
-wali_syscall_mlock(wasm_exec_env_t exec_env);
-long
-wali_syscall_munlock(wasm_exec_env_t exec_env);
-long
-wali_syscall_mlockall(wasm_exec_env_t exec_env);
-long
-wali_syscall_munlockall(wasm_exec_env_t exec_env);
-long
-wali_syscall_vhangup(wasm_exec_env_t exec_env);
-long
-wali_syscall_modify_ldt(wasm_exec_env_t exec_env);
-long
-wali_syscall_pivot_root(wasm_exec_env_t exec_env);
-long
-wali_syscall__sysctl(wasm_exec_env_t exec_env);
-long
 wali_syscall_prctl(wasm_exec_env_t exec_env, long a1, long a2, long a3, long a4,
                    long a5);
-long
-wali_syscall_arch_prctl(wasm_exec_env_t exec_env);
-long
-wali_syscall_adjtimex(wasm_exec_env_t exec_env);
 long
 wali_syscall_setrlimit(wasm_exec_env_t exec_env, long a1, long a2);
 long
 wali_syscall_chroot(wasm_exec_env_t exec_env, long a1);
 long
-wali_syscall_sync(wasm_exec_env_t exec_env);
-long
-wali_syscall_acct(wasm_exec_env_t exec_env);
-long
-wali_syscall_settimeofday(wasm_exec_env_t exec_env);
-long
-wali_syscall_mount(wasm_exec_env_t exec_env);
-long
-wali_syscall_umount2(wasm_exec_env_t exec_env);
-long
-wali_syscall_swapon(wasm_exec_env_t exec_env);
-long
-wali_syscall_swapoff(wasm_exec_env_t exec_env);
-long
-wali_syscall_reboot(wasm_exec_env_t exec_env);
-long
-wali_syscall_sethostname(wasm_exec_env_t exec_env);
-long
-wali_syscall_setdomainname(wasm_exec_env_t exec_env);
-long
-wali_syscall_iopl(wasm_exec_env_t exec_env);
-long
-wali_syscall_ioperm(wasm_exec_env_t exec_env);
-long
-wali_syscall_create_module(wasm_exec_env_t exec_env);
-long
-wali_syscall_init_module(wasm_exec_env_t exec_env);
-long
-wali_syscall_delete_module(wasm_exec_env_t exec_env);
-long
-wali_syscall_get_kernel_syms(wasm_exec_env_t exec_env);
-long
-wali_syscall_query_module(wasm_exec_env_t exec_env);
-long
-wali_syscall_quotactl(wasm_exec_env_t exec_env);
-long
-wali_syscall_nfsservctl(wasm_exec_env_t exec_env);
-long
-wali_syscall_getpmsg(wasm_exec_env_t exec_env);
-long
-wali_syscall_putpmsg(wasm_exec_env_t exec_env);
-long
-wali_syscall_afs_syscall(wasm_exec_env_t exec_env);
-long
-wali_syscall_tuxcall(wasm_exec_env_t exec_env);
-long
-wali_syscall_security(wasm_exec_env_t exec_env);
-long
 wali_syscall_gettid(wasm_exec_env_t exec_env);
 long
-wali_syscall_readahead(wasm_exec_env_t exec_env);
-long
-wali_syscall_setxattr(wasm_exec_env_t exec_env);
-long
-wali_syscall_lsetxattr(wasm_exec_env_t exec_env);
-long
-wali_syscall_fsetxattr(wasm_exec_env_t exec_env);
-long
-wali_syscall_getxattr(wasm_exec_env_t exec_env);
-long
-wali_syscall_lgetxattr(wasm_exec_env_t exec_env);
-long
-wali_syscall_fgetxattr(wasm_exec_env_t exec_env);
-long
-wali_syscall_listxattr(wasm_exec_env_t exec_env);
-long
-wali_syscall_llistxattr(wasm_exec_env_t exec_env);
-long
-wali_syscall_flistxattr(wasm_exec_env_t exec_env);
-long
-wali_syscall_removexattr(wasm_exec_env_t exec_env);
-long
-wali_syscall_lremovexattr(wasm_exec_env_t exec_env);
-long
-wali_syscall_fremovexattr(wasm_exec_env_t exec_env);
-long
 wali_syscall_tkill(wasm_exec_env_t exec_env, long a1, long a2);
-long
-wali_syscall_time(wasm_exec_env_t exec_env);
 long
 wali_syscall_futex(wasm_exec_env_t exec_env, long a1, long a2, long a3, long a4,
                    long a5, long a6);
 long
-wali_syscall_sched_setaffinity(wasm_exec_env_t exec_env);
-long
 wali_syscall_sched_getaffinity(wasm_exec_env_t exec_env, long a1, long a2,
                                long a3);
-long
-wali_syscall_set_thread_area(wasm_exec_env_t exec_env);
-long
-wali_syscall_io_setup(wasm_exec_env_t exec_env);
-long
-wali_syscall_io_destroy(wasm_exec_env_t exec_env);
-long
-wali_syscall_io_getevents(wasm_exec_env_t exec_env);
-long
-wali_syscall_io_submit(wasm_exec_env_t exec_env);
-long
-wali_syscall_io_cancel(wasm_exec_env_t exec_env);
-long
-wali_syscall_get_thread_area(wasm_exec_env_t exec_env);
-long
-wali_syscall_lookup_dcookie(wasm_exec_env_t exec_env);
-long
-wali_syscall_epoll_create(wasm_exec_env_t exec_env);
-long
-wali_syscall_epoll_ctl_old(wasm_exec_env_t exec_env);
-long
-wali_syscall_epoll_wait_old(wasm_exec_env_t exec_env);
-long
-wali_syscall_remap_file_pages(wasm_exec_env_t exec_env);
 long
 wali_syscall_getdents64(wasm_exec_env_t exec_env, long a1, long a2, long a3);
 long
 wali_syscall_set_tid_address(wasm_exec_env_t exec_env, long a1);
 long
-wali_syscall_restart_syscall(wasm_exec_env_t exec_env);
-long
-wali_syscall_semtimedop(wasm_exec_env_t exec_env);
-long
 wali_syscall_fadvise(wasm_exec_env_t exec_env, long a1, long a2, long a3,
                      long a4);
-long
-wali_syscall_timer_create(wasm_exec_env_t exec_env);
-long
-wali_syscall_timer_settime(wasm_exec_env_t exec_env);
-long
-wali_syscall_timer_gettime(wasm_exec_env_t exec_env);
-long
-wali_syscall_timer_getoverrun(wasm_exec_env_t exec_env);
-long
-wali_syscall_timer_delete(wasm_exec_env_t exec_env);
-long
-wali_syscall_clock_settime(wasm_exec_env_t exec_env);
 long
 wali_syscall_clock_gettime(wasm_exec_env_t exec_env, long a1, long a2);
 long
@@ -568,75 +336,21 @@ wali_syscall_clock_nanosleep(wasm_exec_env_t exec_env, long a1, long a2,
 long
 wali_syscall_exit_group(wasm_exec_env_t exec_env, long a1);
 long
-wali_syscall_epoll_wait(wasm_exec_env_t exec_env);
-long
 wali_syscall_epoll_ctl(wasm_exec_env_t exec_env, long a1, long a2, long a3,
                        long a4);
-long
-wali_syscall_tgkill(wasm_exec_env_t exec_env);
-long
-wali_syscall_utimes(wasm_exec_env_t exec_env);
-long
-wali_syscall_vserver(wasm_exec_env_t exec_env);
-long
-wali_syscall_mbind(wasm_exec_env_t exec_env);
-long
-wali_syscall_set_mempolicy(wasm_exec_env_t exec_env);
-long
-wali_syscall_get_mempolicy(wasm_exec_env_t exec_env);
-long
-wali_syscall_mq_open(wasm_exec_env_t exec_env);
-long
-wali_syscall_mq_unlink(wasm_exec_env_t exec_env);
-long
-wali_syscall_mq_timedsend(wasm_exec_env_t exec_env);
-long
-wali_syscall_mq_timedreceive(wasm_exec_env_t exec_env);
-long
-wali_syscall_mq_notify(wasm_exec_env_t exec_env);
-long
-wali_syscall_mq_getsetattr(wasm_exec_env_t exec_env);
-long
-wali_syscall_kexec_load(wasm_exec_env_t exec_env);
-long
-wali_syscall_waitid(wasm_exec_env_t exec_env);
-long
-wali_syscall_add_key(wasm_exec_env_t exec_env);
-long
-wali_syscall_request_key(wasm_exec_env_t exec_env);
-long
-wali_syscall_keyctl(wasm_exec_env_t exec_env);
-long
-wali_syscall_ioprio_set(wasm_exec_env_t exec_env);
-long
-wali_syscall_ioprio_get(wasm_exec_env_t exec_env);
-long
-wali_syscall_inotify_init(wasm_exec_env_t exec_env);
-long
-wali_syscall_inotify_add_watch(wasm_exec_env_t exec_env);
-long
-wali_syscall_inotify_rm_watch(wasm_exec_env_t exec_env);
-long
-wali_syscall_migrate_pages(wasm_exec_env_t exec_env);
 long
 wali_syscall_openat(wasm_exec_env_t exec_env, long a1, long a2, long a3,
                     long a4);
 long
 wali_syscall_mkdirat(wasm_exec_env_t exec_env, long a1, long a2, long a3);
 long
-wali_syscall_mknodat(wasm_exec_env_t exec_env);
-long
 wali_syscall_fchownat(wasm_exec_env_t exec_env, long a1, long a2, long a3,
                       long a4, long a5);
 long
-wali_syscall_futimesat(wasm_exec_env_t exec_env);
-long
-wali_syscall_fstatat(wasm_exec_env_t exec_env, long a1, long a2, long a3,
-                     long a4);
+wali_syscall_newfstatat(wasm_exec_env_t exec_env, long a1, long a2, long a3,
+                        long a4);
 long
 wali_syscall_unlinkat(wasm_exec_env_t exec_env, long a1, long a2, long a3);
-long
-wali_syscall_renameat(wasm_exec_env_t exec_env);
 long
 wali_syscall_linkat(wasm_exec_env_t exec_env, long a1, long a2, long a3,
                     long a4, long a5);
@@ -658,44 +372,16 @@ long
 wali_syscall_ppoll(wasm_exec_env_t exec_env, long a1, long a2, long a3, long a4,
                    long a5);
 long
-wali_syscall_unshare(wasm_exec_env_t exec_env);
-long
-wali_syscall_set_robust_list(wasm_exec_env_t exec_env);
-long
-wali_syscall_get_robust_list(wasm_exec_env_t exec_env);
-long
-wali_syscall_splice(wasm_exec_env_t exec_env);
-long
-wali_syscall_tee(wasm_exec_env_t exec_env);
-long
-wali_syscall_sync_file_range(wasm_exec_env_t exec_env);
-long
-wali_syscall_vmsplice(wasm_exec_env_t exec_env);
-long
-wali_syscall_move_pages(wasm_exec_env_t exec_env);
-long
 wali_syscall_utimensat(wasm_exec_env_t exec_env, long a1, long a2, long a3,
                        long a4);
 long
 wali_syscall_epoll_pwait(wasm_exec_env_t exec_env, long a1, long a2, long a3,
                          long a4, long a5, long a6);
 long
-wali_syscall_signalfd(wasm_exec_env_t exec_env);
-long
-wali_syscall_timerfd_create(wasm_exec_env_t exec_env);
-long
 wali_syscall_eventfd(wasm_exec_env_t exec_env, long a1);
-long
-wali_syscall_fallocate(wasm_exec_env_t exec_env);
-long
-wali_syscall_timerfd_settime(wasm_exec_env_t exec_env);
-long
-wali_syscall_timerfd_gettime(wasm_exec_env_t exec_env);
 long
 wali_syscall_accept4(wasm_exec_env_t exec_env, long a1, long a2, long a3,
                      long a4);
-long
-wali_syscall_signalfd4(wasm_exec_env_t exec_env);
 long
 wali_syscall_eventfd2(wasm_exec_env_t exec_env, long a1, long a2);
 long
@@ -705,90 +391,16 @@ wali_syscall_dup3(wasm_exec_env_t exec_env, long a1, long a2, long a3);
 long
 wali_syscall_pipe2(wasm_exec_env_t exec_env, long a1, long a2);
 long
-wali_syscall_inotify_init1(wasm_exec_env_t exec_env);
-long
-wali_syscall_preadv(wasm_exec_env_t exec_env);
-long
-wali_syscall_pwritev(wasm_exec_env_t exec_env);
-long
-wali_syscall_rt_tgsigqueueinfo(wasm_exec_env_t exec_env);
-long
-wali_syscall_perf_event_open(wasm_exec_env_t exec_env);
-long
-wali_syscall_recvmmsg(wasm_exec_env_t exec_env);
-long
-wali_syscall_fanotify_init(wasm_exec_env_t exec_env);
-long
-wali_syscall_fanotify_mark(wasm_exec_env_t exec_env);
-long
 wali_syscall_prlimit64(wasm_exec_env_t exec_env, long a1, long a2, long a3,
                        long a4);
-long
-wali_syscall_name_to_handle_at(wasm_exec_env_t exec_env);
-long
-wali_syscall_open_by_handle_at(wasm_exec_env_t exec_env);
-long
-wali_syscall_clock_adjtime(wasm_exec_env_t exec_env);
-long
-wali_syscall_syncfs(wasm_exec_env_t exec_env);
-long
-wali_syscall_sendmmsg(wasm_exec_env_t exec_env);
-long
-wali_syscall_setns(wasm_exec_env_t exec_env);
-long
-wali_syscall_getcpu(wasm_exec_env_t exec_env);
-long
-wali_syscall_process_vm_readv(wasm_exec_env_t exec_env);
-long
-wali_syscall_process_vm_writev(wasm_exec_env_t exec_env);
-long
-wali_syscall_kcmp(wasm_exec_env_t exec_env);
-long
-wali_syscall_finit_module(wasm_exec_env_t exec_env);
-long
-wali_syscall_sched_setattr(wasm_exec_env_t exec_env);
-long
-wali_syscall_sched_getattr(wasm_exec_env_t exec_env);
 long
 wali_syscall_renameat2(wasm_exec_env_t exec_env, long a1, long a2, long a3,
                        long a4, long a5);
 long
-wali_syscall_seccomp(wasm_exec_env_t exec_env);
-long
 wali_syscall_getrandom(wasm_exec_env_t exec_env, long a1, long a2, long a3);
-long
-wali_syscall_memfd_create(wasm_exec_env_t exec_env);
-long
-wali_syscall_kexec_file_load(wasm_exec_env_t exec_env);
-long
-wali_syscall_bpf(wasm_exec_env_t exec_env);
-long
-wali_syscall_execveat(wasm_exec_env_t exec_env);
-long
-wali_syscall_userfaultfd(wasm_exec_env_t exec_env);
-long
-wali_syscall_membarrier(wasm_exec_env_t exec_env);
-long
-wali_syscall_mlock2(wasm_exec_env_t exec_env);
-long
-wali_syscall_copy_file_range(wasm_exec_env_t exec_env);
-long
-wali_syscall_preadv2(wasm_exec_env_t exec_env);
-long
-wali_syscall_pwritev2(wasm_exec_env_t exec_env);
-long
-wali_syscall_pkey_mprotect(wasm_exec_env_t exec_env);
-long
-wali_syscall_pkey_alloc(wasm_exec_env_t exec_env);
-long
-wali_syscall_pkey_free(wasm_exec_env_t exec_env);
 long
 wali_syscall_statx(wasm_exec_env_t exec_env, long a1, long a2, long a3, long a4,
                    long a5);
-long
-wali_syscall_io_pgetevents(wasm_exec_env_t exec_env);
-long
-wali_syscall_rseq(wasm_exec_env_t exec_env);
 long
 wali_syscall_faccessat2(wasm_exec_env_t exec_env, long a1, long a2, long a3,
                         long a4);
