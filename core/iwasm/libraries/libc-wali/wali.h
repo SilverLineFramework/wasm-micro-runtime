@@ -297,8 +297,6 @@ wali_syscall_rt_sigsuspend(wasm_exec_env_t exec_env, long a1, long a2);
 long
 wali_syscall_sigaltstack(wasm_exec_env_t exec_env, long a1, long a2);
 long
-wali_syscall_utime(wasm_exec_env_t exec_env, long a1, long a2);
-long
 wali_syscall_statfs(wasm_exec_env_t exec_env, long a1, long a2);
 long
 wali_syscall_fstatfs(wasm_exec_env_t exec_env, long a1, long a2);
