@@ -96,6 +96,9 @@ copy_pselect6_sigmask(wasm_exec_env_t exec_env, Addr wasm_psel_sm,
 {
     /* Libc stores the address in a long (64-bit). Cannot use RD_FIELD_ADDR
      * since it reads 32-bit values */
+    if (wasm_psel_sm == NULL) {
+      return NULL;
+    }
     long sigmask_addr = RD_FIELD(wasm_psel_sm, long);
     sm_struct[0] = (long)MADDR(sigmask_addr);
     sm_struct[1] = RD_FIELD(wasm_psel_sm, long);
