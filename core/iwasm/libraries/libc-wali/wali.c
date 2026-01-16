@@ -1616,10 +1616,14 @@ wali_syscall_sigaltstack(wasm_exec_env_t exec_env, long a1, long a2)
 
     stack_t ss = { 0 }, old_ss = { 0 };
     stack_t *ss_ptr = copy_sigstack(exec_env, wasm_ss, &ss);
+    // This doesn't need to copy the fields in, just needs the pointer
     stack_t *old_ss_ptr = copy_sigstack(exec_env, wasm_old_ss, &old_ss);
 
-    RETURN(__syscall2(SYS_sigaltstack, ss_ptr, old_ss_ptr), "sigaltstack", 2,
-           a1, a2);
+    long retval = __syscall2(SYS_sigaltstack, ss_ptr, old_ss_ptr);
+    // Reconstruct the old stack returned
+    copy2wasm_sigstack(exec_env, wasm_old_ss, old_ss_ptr);
+
+    RETURN(retval, "sigaltstack", 2, a1, a2);
 }
 
 // 132

@@ -249,6 +249,18 @@ copy_sigstack(wasm_exec_env_t exec_env, Addr wasm_sigstack, stack_t *ss)
     return ss;
 }
 
+/* Copy native sigstack back to Wasm */
+extern inline void
+copy2wasm_sigstack(wasm_exec_env_t exec_env, Addr wasm_sigstack, stack_t *ss)
+{
+    if (!ss) {
+        return;
+    }
+    WR_FIELD_ADDR(wasm_sigstack, ss->ss_sp);
+    WR_FIELD(wasm_sigstack, ss->ss_flags, int);
+    WR_FIELD(wasm_sigstack, ss->ss_size, uint32_t);
+}
+
 /* Copy array of strings (strings are not malloced)*/
 extern inline char **
 copy_stringarr(wasm_exec_env_t exec_env, Addr wasm_arr)
