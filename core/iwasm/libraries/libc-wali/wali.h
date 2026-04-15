@@ -155,8 +155,6 @@ wali_syscall_dup2(wasm_exec_env_t exec_env, long a1, long a2);
 long
 wali_syscall_nanosleep(wasm_exec_env_t exec_env, long a1, long a2);
 long
-wali_syscall_alarm(wasm_exec_env_t exec_env, long a1);
-long
 wali_syscall_setitimer(wasm_exec_env_t exec_env, long a1, long a2, long a3);
 long
 wali_syscall_getpid(wasm_exec_env_t exec_env);

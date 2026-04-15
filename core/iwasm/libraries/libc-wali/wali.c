@@ -929,19 +929,6 @@ wali_syscall_nanosleep(wasm_exec_env_t exec_env, long a1, long a2)
            a2);
 }
 
-// 37
-long
-wali_syscall_alarm(wasm_exec_env_t exec_env, long a1)
-{
-    SC(37, alarm);
-#if __x86_64__
-    RETURN(__syscall1(SYS_alarm, a1), "alarm", 1, a1);
-#elif __aarch64__ || __riscv64__
-    MISSC(alarm);
-    wali_proc_exit(exec_env, 1);
-#endif
-}
-
 // 38
 long
 wali_syscall_setitimer(wasm_exec_env_t exec_env, long a1, long a2, long a3)
@@ -2413,7 +2400,6 @@ static NativeSymbol wali_native_symbols[] = {
     NSYMBOL(SYS_dup, wali_syscall_dup, "(i)I"),
     NSYMBOL(SYS_dup2, wali_syscall_dup2, "(ii)I"),
     NSYMBOL(SYS_nanosleep, wali_syscall_nanosleep, "(ii)I"),
-    NSYMBOL(SYS_alarm, wali_syscall_alarm, "(i)I"),
     NSYMBOL(SYS_setitimer, wali_syscall_setitimer, "(iii)I"),
     NSYMBOL(SYS_getpid, wali_syscall_getpid, "()I"),
     NSYMBOL(SYS_socket, wali_syscall_socket, "(iii)I"),
