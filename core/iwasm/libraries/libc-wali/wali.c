@@ -463,8 +463,11 @@ wali_syscall_fstat(wasm_exec_env_t exec_env, long a1, long a2)
 #if __x86_64__
     RETURN(__syscall2(SYS_fstat, a1, MADDR(a2)), "fstat", 2, a1, a2);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_newfstatat(exec_env, "", a1, a2, AT_EMPTY_PATH), "fstat", 2,
-           a1, a2);
+    Addr wasm_stat = MADDR(a2);
+    struct stat sb;
+    long retval = __syscall4(SYS_newfstatat, a1, "", &sb, AT_EMPTY_PATH);
+    copy2wasm_stat_struct(exec_env, wasm_stat, &sb);
+    RETURN(retval, "fstat", 2, a1, a2);
 #endif
 }
 
