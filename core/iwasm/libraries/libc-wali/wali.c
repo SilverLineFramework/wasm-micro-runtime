@@ -460,7 +460,12 @@ long
 wali_syscall_fstat(wasm_exec_env_t exec_env, long a1, long a2)
 {
     SC(5, fstat);
+#if __x86_64__
     RETURN(__syscall2(SYS_fstat, a1, MADDR(a2)), "fstat", 2, a1, a2);
+#elif __aarch64__ || __riscv64__
+    RETURN(wali_syscall_newfstatat(exec_env, "", a1, a2, AT_EMPTY_PATH), "fstat", 2,
+           a1, a2);
+#endif
 }
 
 // 6
