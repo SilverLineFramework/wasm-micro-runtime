@@ -463,11 +463,8 @@ wali_syscall_fstat(wasm_exec_env_t exec_env, long a1, long a2)
 #if __x86_64__
     RETURN(__syscall2(SYS_fstat, a1, MADDR(a2)), "fstat", 2, a1, a2);
 #elif __aarch64__ || __riscv64__
-    Addr wasm_stat = MADDR(a2);
-    struct stat sb;
-    long retval = __syscall4(SYS_newfstatat, a1, "", &sb, AT_EMPTY_PATH);
-    copy2wasm_stat_struct(exec_env, wasm_stat, &sb);
-    RETURN(retval, "fstat", 2, a1, a2);
+    int ret = newfstatat_impl(exec_env, a1, (BufPtr){ .val = &"", .ctx = NativePtr }, a2, AT_EMPTY_PATH);
+    RETURN(ret, "fstat", 2, a1, a2);
 #endif
 }
 
@@ -1828,22 +1825,42 @@ wali_syscall_fchownat(wasm_exec_env_t exec_env, long a1, long a2, long a3,
            a1, a2, a3, a4, a5);
 }
 
+// Flag to indicate whether a pointer is a Wasm memory address or a native memory address
+typedef enum {
+    WasmPtr = 0,
+    NativePtr = 1
+} PtrCtx;
+
+// Type capturing pointer along with its context
+typedef struct {
+    long val;
+    PtrCtx ctx;
+} BufPtr;
+
+long native_addr(wasm_exec_env_t exec_env, BufPtr bp) {
+    return (bp.ctx == WasmPtr) ? (long) MADDR(bp.val) : bp.val;
+}
+
+long newfstatat_impl(wasm_exec_env_t exec_env, long a1, BufPtr a2, long a3, long a4) {
+#if __x86_64__
+    return __syscall4(SYS_newfstatat, a1, native_addr(exec_env, a2), MADDR(a3), a4);
+#elif __aarch64__ || __riscv64__
+    Addr wasm_stat = MADDR(a3);
+    struct stat sb;
+    long retval = __syscall4(SYS_newfstatat, a1, native_addr(exec_env, a2), &sb, a4);
+    copy2wasm_stat_struct(exec_env, wasm_stat, &sb);
+    return retval;
+#endif
+}
+
 // 262
 long
 wali_syscall_newfstatat(wasm_exec_env_t exec_env, long a1, long a2, long a3,
                         long a4)
 {
     SC(262, newfstatat);
-#if __x86_64__
-    RETURN(__syscall4(SYS_newfstatat, a1, MADDR(a2), MADDR(a3), a4),
-           "newfstatat", 4, a1, a2, a3, a4);
-#elif __aarch64__ || __riscv64__
-    Addr wasm_stat = MADDR(a3);
-    struct stat sb;
-    long retval = __syscall4(SYS_newfstatat, a1, MADDR(a2), &sb, a4);
-    copy2wasm_stat_struct(exec_env, wasm_stat, &sb);
-    RETURN(retval, "newfstatat", 4, a1, a2, a3, a4);
-#endif
+    int ret = newfstatat_impl(exec_env, a1, (BufPtr){ .val = a2, .ctx = WasmPtr }, a3, a4);
+    RETURN(ret, "newfstatat", 4, a1, a2, a3, a4);
 }
 
 // 263
