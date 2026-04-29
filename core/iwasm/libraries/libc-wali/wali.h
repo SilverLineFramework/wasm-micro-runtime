@@ -79,6 +79,19 @@ typedef struct __libc_jmp_buf_tag {
 
 typedef __libc_jmp_buf __libc_sigjmp_buf;
 
+
+// Flag to indicate whether a pointer is a Wasm memory address or a native memory address
+typedef enum {
+    WasmPtr = 0,
+    NativePtr = 1
+} PtrCtx;
+
+// Type capturing pointer along with its context
+typedef struct {
+    long val;
+    PtrCtx ctx;
+} BufPtr;
+
 /** **/
 
 void

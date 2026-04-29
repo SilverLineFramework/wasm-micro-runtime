@@ -405,6 +405,24 @@ strace_print(long syscall_res, char *syscall_name, int num_args, ...)
     }
 }
 
+
+long native_addr(wasm_exec_env_t exec_env, BufPtr bp) {
+    return (bp.ctx == WasmPtr) ? (long) MADDR(bp.val) : bp.val;
+}
+
+long newfstatat_impl(wasm_exec_env_t exec_env, long a1, BufPtr a2, long a3, long a4) {
+#if __x86_64__
+    return __syscall4(SYS_newfstatat, a1, native_addr(exec_env, a2), MADDR(a3), a4);
+#elif __aarch64__ || __riscv64__
+    Addr wasm_stat = MADDR(a3);
+    struct stat sb;
+    long retval = __syscall4(SYS_newfstatat, a1, native_addr(exec_env, a2), &sb, a4);
+    copy2wasm_stat_struct(exec_env, wasm_stat, &sb);
+    return retval;
+#endif
+}
+
+
 // 0
 long
 wali_syscall_read(wasm_exec_env_t exec_env, long a1, long a2, long a3)
@@ -463,7 +481,7 @@ wali_syscall_fstat(wasm_exec_env_t exec_env, long a1, long a2)
 #if __x86_64__
     RETURN(__syscall2(SYS_fstat, a1, MADDR(a2)), "fstat", 2, a1, a2);
 #elif __aarch64__ || __riscv64__
-    int ret = newfstatat_impl(exec_env, a1, (BufPtr){ .val = &"", .ctx = NativePtr }, a2, AT_EMPTY_PATH);
+    int ret = newfstatat_impl(exec_env, a1, (BufPtr){ .val = (long)&"", .ctx = NativePtr }, a2, AT_EMPTY_PATH);
     RETURN(ret, "fstat", 2, a1, a2);
 #endif
 }
@@ -1823,34 +1841,6 @@ wali_syscall_fchownat(wasm_exec_env_t exec_env, long a1, long a2, long a3,
     SC(260, fchownat);
     RETURN(__syscall5(SYS_fchownat, a1, MADDR(a2), a3, a4, a5), "fchownat", 5,
            a1, a2, a3, a4, a5);
-}
-
-// Flag to indicate whether a pointer is a Wasm memory address or a native memory address
-typedef enum {
-    WasmPtr = 0,
-    NativePtr = 1
-} PtrCtx;
-
-// Type capturing pointer along with its context
-typedef struct {
-    long val;
-    PtrCtx ctx;
-} BufPtr;
-
-long native_addr(wasm_exec_env_t exec_env, BufPtr bp) {
-    return (bp.ctx == WasmPtr) ? (long) MADDR(bp.val) : bp.val;
-}
-
-long newfstatat_impl(wasm_exec_env_t exec_env, long a1, BufPtr a2, long a3, long a4) {
-#if __x86_64__
-    return __syscall4(SYS_newfstatat, a1, native_addr(exec_env, a2), MADDR(a3), a4);
-#elif __aarch64__ || __riscv64__
-    Addr wasm_stat = MADDR(a3);
-    struct stat sb;
-    long retval = __syscall4(SYS_newfstatat, a1, native_addr(exec_env, a2), &sb, a4);
-    copy2wasm_stat_struct(exec_env, wasm_stat, &sb);
-    return retval;
-#endif
 }
 
 // 262
