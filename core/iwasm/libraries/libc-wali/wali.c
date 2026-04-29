@@ -31,6 +31,7 @@
 #include <sys/syscall.h>
 #include <sys/mman.h>
 #include <semaphore.h>
+#include <linux/prctl.h>
 
 #include "wali.h"
 #include "copy.h"
@@ -1670,8 +1671,18 @@ wali_syscall_prctl(wasm_exec_env_t exec_env, long a1, long a2, long a3, long a4,
                    long a5)
 {
     SC(157, prctl);
-    RETURN(__syscall5(SYS_prctl, a1, a2, a3, a4, a5), "prctl", 5, a1, a2, a3,
-           a4, a5);
+    long retval = -1;
+    switch(a1) {
+        case PR_GET_NAME:
+        case PR_SET_NAME:
+            retval = __syscall2(SYS_prctl, a1, MADDR(a2));
+            break;
+        default:
+            WARN("Unsupported prctl option: %ld", a1);
+            retval = -1;
+            break;
+    }
+    RETURN(retval, "prctl", 5, a1, a2, a3, a4, a5);
 }
 
 // 160
