@@ -565,8 +565,8 @@ wali_syscall_mmap(wasm_exec_env_t exec_env, long a1, long a2, long a3, long a4,
 
     Addr mem_addr =
         (Addr)__syscall6(SYS_mmap, mmap_addr, a2, a3, MAP_FIXED | a4, a5, a6);
-    /* Sometimes mmap returns -9 instead of MAP_FAILED? */
-    if ((mem_addr == MAP_FAILED) || (mem_addr == (void *)(-9))) {
+    /* Mmap syscall returns -ERRNO */
+    if (((long)mem_addr < 0) && ((long)mem_addr > -4096)) {
         FATALSC(mmap, "Failed to mmap!\n");
         goto mmap_fail;
     }
