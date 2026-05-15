@@ -198,7 +198,7 @@ Addr align_mmap_addr(wasm_exec_env_t exec_env) {
     __syscall6(n, (long)a1, (long)a2, (long)a3, (long)a4, \
                            (long)a5, (long)a6)
 
-#define SCSTR(sc) "[wali :: " #sc "] "
+#define SCSTR(sc) "[\033[1;36mwali\033[0m::\033[1;33m" #sc "\033[0m] "
 
 /* This implicitly checks for process exits, use carefully. 
   We can return -1 within if process exit since CHECK_SUSPEND will 
@@ -1939,8 +1939,7 @@ wali_setjmp(wasm_exec_env_t exec_env, WasmMemAddr env)
 void
 wali_longjmp(wasm_exec_env_t exec_env, WasmMemAddr env, int32_t val)
 {
-    SC_VOID(siglongjmp);
-    FATAL_SC(siglongjmp, "Not supported in WALI yet, exiting code...");
+    FATAL_SC(siglongjmp, "terminates process immediately...");
     wali_proc_exit(exec_env, 1);
     /* Should not reach here */
     exit(-1);
@@ -1980,7 +1979,7 @@ void
 wali_proc_exit(wasm_exec_env_t exec_env, int32_t status)
 {
     // Don't use SC since it polls proc_exit_invoked, which is set in this function
-    VB(SCSTR(__proc_exit));
+    LOG_VERBOSE(SCSTR(__proc_exit));
     wasm_module_inst_t module_inst = get_module_inst(exec_env);
     WALIContext *wali_ctx = wasm_runtime_get_wali_ctx(module_inst);
     /* if wali_deinit is invoked, main ended successfully, do
@@ -2000,21 +1999,21 @@ wali_proc_exit(wasm_exec_env_t exec_env, int32_t status)
 unsigned int
 wali_cl_get_argc(wasm_exec_env_t exec_env)
 {
-    SC(cl_get_argc);
+    SC(__cl_get_argc);
     return wali_app_argc;
 }
 
 unsigned int
 wali_cl_get_argv_len(wasm_exec_env_t exec_env, uint32_t arg_index)
 {
-    SC(cl_get_argc_len);
+    SC(__cl_get_argv_len);
     return strlen(wali_app_argv[arg_index]);
 }
 
 int
 wali_cl_copy_argv(wasm_exec_env_t exec_env, WasmMemAddr argbuf, uint32_t arg_index)
 {
-    SC(cl_copy_argv);
+    SC(__cl_copy_argv);
     Addr argv = MADDR(argbuf);
     strcpy((char *)argv, wali_app_argv[arg_index]);
     return 0;
@@ -2023,7 +2022,7 @@ wali_cl_copy_argv(wasm_exec_env_t exec_env, WasmMemAddr argbuf, uint32_t arg_ind
 int
 wali_get_init_envfile(wasm_exec_env_t exec_env, WasmMemAddr pathbuf, uint32_t bufsize)
 {
-    SC(get_init_envfile);
+    SC(__get_init_envfile);
     Addr fbuf = MADDR(pathbuf);
 
     /* Check for passthrough env from an execve call */
@@ -2098,7 +2097,7 @@ wali_dispatch_thread_libc(void *exec_env_ptr)
 int
 wali_wasm_thread_spawn(wasm_exec_env_t exec_env, WasmTableInternalIdx wasm_start_fn, WasmMemAddr args)
 {
-    SC(wasm_thread_spawn(clone));
+    SC(__wasm_thread_spawn);
     wasm_module_inst_t module_inst = get_module_inst(exec_env);
     wasm_module_t module = wasm_runtime_get_module(module_inst);
     bh_assert(module);

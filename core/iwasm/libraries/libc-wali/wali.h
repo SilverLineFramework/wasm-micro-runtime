@@ -7,7 +7,7 @@
 #include "wali_defs.h"
 
 /** Logging **/
-#define VB(fmt, ...) LOG_VERBOSE("[wali-internal] " fmt, ##__VA_ARGS__)
+#define VB(fmt, ...) LOG_VERBOSE("[wali-log] " fmt, ##__VA_ARGS__)
 
 /** Memory defines/translations **/
 typedef uint8_t *Addr;
