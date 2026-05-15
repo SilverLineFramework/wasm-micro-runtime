@@ -8,10 +8,6 @@ add_definitions (-DWASM_ENABLE_LIBC_WALI=1)
 
 include_directories(${LIBC_WALI_DIR}/wali_arch/${ARCH})
 
-# Compile flags
-add_compile_definitions(WALI_ENABLE_SYSCALL_PROFILE=0)
-add_compile_definitions(WALI_ENABLE_NATIVE_SYSCALL_PROFILE=0)
-
 # Setup files to compile
 file (GLOB_RECURSE wali_arch_sources 
     ${LIBC_WALI_DIR}/wali_arch/${ARCH}/*.s 

@@ -50,8 +50,6 @@ add_definitions(-DWASM_ENABLE_MODULE_INST_CONTEXT=1)
 
 add_definitions(-DWASM_ENABLE_GC=1)
 
-add_compile_definitions(WALI_ENABLE_SYSCALL_PROFILE=0)
-add_compile_definitions(WALI_ENABLE_NATIVE_SYSCALL_PROFILE=0)
 add_compile_definitions(WALI_ENABLE_SIGNAL_HANDLING=1)
 add_compile_definitions(WALI_ENABLE_LOOP_SIGPOLL=1)
 

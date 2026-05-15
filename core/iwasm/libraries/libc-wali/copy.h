@@ -286,38 +286,6 @@ copy_stringarr(wasm_exec_env_t exec_env, Addr wasm_arr)
     return stringarr;
 }
 
-extern _Noreturn void
-__libc_longjmp_asm(__libc_sigjmp_buf, int);
-extern int
-__libc_sigsetjmp_asm(__libc_sigjmp_buf, int);
-#define __libc_siglongjmp __libc_longjmp_asm
-
-/* Copy jmpbuf struct to WASM for setjmp */
-extern inline void
-copy2wasm_jmp_buf(wasm_exec_env_t exec_env, Addr wasm_buf,
-                  struct __libc_jmp_buf_tag *buf)
-{
-    WR_FIELD_ARRAY(wasm_buf, buf->__jb, unsigned long, 8);
-    WR_FIELD(wasm_buf, buf->__fl, unsigned long);
-    WR_FIELD_ARRAY(wasm_buf, buf->__ss, unsigned long, (128 / sizeof(long)));
-}
-
-/* Copy jmpbuf struct to native for setjmp */
-extern inline struct __libc_jmp_buf_tag *
-copy_jmp_buf(wasm_exec_env_t exec_env, Addr wasm_jmp_buf)
-{
-    if (!wasm_jmp_buf) {
-        return NULL;
-    }
-    struct __libc_jmp_buf_tag *buf =
-        (struct __libc_jmp_buf_tag *)malloc(sizeof(struct __libc_jmp_buf_tag));
-    RD_FIELD_ARRAY(buf->__jb, wasm_jmp_buf, unsigned long, 8);
-    buf->__fl = RD_FIELD(wasm_jmp_buf, unsigned long);
-    RD_FIELD_ARRAY(buf->__ss, wasm_jmp_buf, unsigned long,
-                   (128 / sizeof(long)));
-    return buf;
-}
-
 /** Architecture-specific copies **/
 #if __has_include("copy_arch.h")
 #include "copy_arch.h"
