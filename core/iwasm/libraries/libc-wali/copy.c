@@ -33,8 +33,8 @@
 #include "copy.h"
 
 /** Architecture-specific copies **/
-#if __has_include("copy_arch.h")
-#include "copy_arch.h"
+#if __has_include("copy_arch.c")
+#include "copy_arch.c"
 #endif
 
 
