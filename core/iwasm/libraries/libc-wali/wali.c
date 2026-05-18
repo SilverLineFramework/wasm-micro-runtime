@@ -39,6 +39,7 @@
 #include "thread_manager.h"
 
 #include "syscall.h"
+#include "impl.h"
 
 /* For startup environment */
 int wali_app_argc;
@@ -186,22 +187,11 @@ Addr align_mmap_addr(wasm_exec_env_t exec_env) {
     return palign;
 }
 
-#define __syscall0(n) __syscall0(n)
-#define __syscall1(n, a1) __syscall1(n, (long)a1)
-#define __syscall2(n, a1, a2) __syscall2(n, (long)a1, (long)a2)
-#define __syscall3(n, a1, a2, a3) __syscall3(n, (long)a1, (long)a2, (long)a3)
-#define __syscall4(n, a1, a2, a3, a4) \
-    __syscall4(n, (long)a1, (long)a2, (long)a3, (long)a4)
-#define __syscall5(n, a1, a2, a3, a4, a5) \
-    __syscall5(n, (long)a1, (long)a2, (long)a3, (long)a4, (long)a5)
-#define __syscall6(n, a1, a2, a3, a4, a5, a6)                         \
-    __syscall6(n, (long)a1, (long)a2, (long)a3, (long)a4, \
-                           (long)a5, (long)a6)
+/* SCSTR, MIS_SC, FATAL_SC, WARN_SC, ERR_SC, and the __syscallN wrappers
+ * are defined in impl.h (shared with impl.c). */
 
-#define SCSTR(sc) "[\033[1;36mwali\033[0m::\033[1;33m" #sc "\033[0m] "
-
-/* This implicitly checks for process exits, use carefully. 
-  We can return -1 within if process exit since CHECK_SUSPEND will 
+/* This implicitly checks for process exits, use carefully.
+  We can return -1 within if process exit since CHECK_SUSPEND will
   trigger before any future call into WALI */
 #define SC_SKEL(sc, ret)                                     \
     {                                                 \
@@ -210,7 +200,7 @@ Addr align_mmap_addr(wasm_exec_env_t exec_env) {
             wali_thread_exit(exec_env, 0);            \
             ret;                                \
         }                                             \
-    } 
+    }
 
 #define SC(sc) SC_SKEL(sc, return -1)
 #define SC_VOID(sc) SC_SKEL(sc, return)
@@ -226,11 +216,6 @@ Addr align_mmap_addr(wasm_exec_env_t exec_env) {
         }                                                      \
         return sc_result;                                     \
     }
-
-#define WARN_SC(sc, ...) LOG_WARNING(SCSTR(sc) __VA_ARGS__); 
-#define ERR_SC(sc, ...)  LOG_ERROR(SCSTR(sc) __VA_ARGS__);
-#define FATAL_SC(sc, ...) LOG_FATAL(SCSTR(sc) __VA_ARGS__);
-#define MIS_SC(sc) FATAL_SC(sc, "Syscall non-existent or unsupported");
 
 /***** WALI Methods *******/
 // strace helper
@@ -267,38 +252,6 @@ strace_print(long syscall_res, char *syscall_name, int num_args, ...)
 }
 
 
-BufPtr wasm_bp(wasm_exec_env_t exec_env, WasmMemAddr bp) {
-    return (BufPtr) { .val = (long) bp, .ctx = WasmPtr, .env = exec_env };
-}
-BufPtr native_bp(wasm_exec_env_t exec_env, void* bp) {
-    return (BufPtr) { .val = (long) bp, .ctx = NativePtr, .env = exec_env };
-}
-
-long bp_as_native(BufPtr bp) {
-    wasm_exec_env_t exec_env = bp.env;
-    return (bp.ctx == WasmPtr) ? (long) MADDR(bp.val) : bp.val;
-}
-WasmMemAddr bp_as_wasm(BufPtr bp) {
-    wasm_exec_env_t exec_env = bp.env;
-    return (bp.ctx == WasmPtr) ? bp.val : (long) WADDR((void*) bp.val);
-}
-
-long newfstatat_impl(wasm_exec_env_t exec_env, int32_t dirfd, BufPtr pathname, WasmMemAddr statbuf, int32_t flags) {
-#if __x86_64__
-    return __syscall4(SYS_newfstatat, dirfd, bp_as_native(pathname), MADDR(statbuf), flags);
-#elif __aarch64__ || __riscv64__
-    Addr wasm_stat = MADDR(statbuf);
-    struct stat sb;
-    long retval = __syscall4(SYS_newfstatat, dirfd, bp_as_native(pathname), &sb, flags);
-    copy2wasm_stat_struct(exec_env, wasm_stat, &sb);
-    return retval;
-#endif
-}
-
-long ppoll_impl(wasm_exec_env_t exec_env, WasmMemAddr fds, uint64_t nfds, BufPtr tmo_p, WasmMemAddr sigmask, uint32_t sigsetsize) {
-    return __syscall5(SYS_ppoll, MADDR(fds), nfds, bp_as_native(tmo_p), MADDR(sigmask), sigsetsize);
-}
-
 void
 wali_thread_exit(wasm_exec_env_t exec_env, long v)
 {
@@ -334,7 +287,7 @@ wali_syscall_open(wasm_exec_env_t exec_env, WasmMemAddr pathname, int32_t flags,
 #if __x86_64__
     RETURN(__syscall3(SYS_open, MADDR(pathname), flags, mode), "open", 3, pathname, flags, mode);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_openat(exec_env, AT_FDCWD, pathname, flags, mode), "open", 3, pathname,
+    RETURN(openat_impl(exec_env, AT_FDCWD, pathname, flags, mode), "open", 3, pathname,
            flags, mode);
 #endif
 }
@@ -355,7 +308,7 @@ wali_syscall_stat(wasm_exec_env_t exec_env, WasmMemAddr pathname, WasmMemAddr st
 #if __x86_64__
     RETURN(__syscall2(SYS_stat, MADDR(pathname), MADDR(statbuf)), "stat", 2, pathname, statbuf);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_newfstatat(exec_env, AT_FDCWD, pathname, statbuf, 0), "stat", 2,
+    RETURN(newfstatat_impl(exec_env, AT_FDCWD, wasm_bp(exec_env, pathname), statbuf, 0), "stat", 2,
            pathname, statbuf);
 #endif
 }
@@ -381,8 +334,8 @@ wali_syscall_lstat(wasm_exec_env_t exec_env, WasmMemAddr pathname, WasmMemAddr s
 #if __x86_64__
     RETURN(__syscall2(SYS_lstat, MADDR(pathname), MADDR(statbuf)), "lstat", 2, pathname, statbuf);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_newfstatat(exec_env, AT_FDCWD, pathname, statbuf,
-                                   AT_SYMLINK_NOFOLLOW),
+    RETURN(newfstatat_impl(exec_env, AT_FDCWD, wasm_bp(exec_env, pathname), statbuf,
+                           AT_SYMLINK_NOFOLLOW),
            "lstat", 2, pathname, statbuf);
 #endif
 }
@@ -670,7 +623,7 @@ wali_syscall_access(wasm_exec_env_t exec_env, WasmMemAddr pathname, int32_t mode
 #if __x86_64__
     RETURN(__syscall2(SYS_access, MADDR(pathname), mode), "access", 2, pathname, mode);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_faccessat(exec_env, AT_FDCWD, pathname, mode, 0), "access", 2,
+    RETURN(faccessat_impl(exec_env, AT_FDCWD, pathname, mode, 0), "access", 2,
            pathname, mode);
 #endif
 }
@@ -683,7 +636,7 @@ wali_syscall_pipe(wasm_exec_env_t exec_env, WasmMemAddr pipefd)
 #if __x86_64__
     RETURN(__syscall1(SYS_pipe, MADDR(pipefd)), "pipe", 1, pipefd);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_pipe2(exec_env, pipefd, 0), "pipe", 1, pipefd);
+    RETURN(pipe2_impl(exec_env, pipefd, 0), "pipe", 1, pipefd);
 #endif
 }
 
@@ -697,8 +650,8 @@ wali_syscall_select(wasm_exec_env_t exec_env, int32_t nfds, WasmMemAddr readfds,
         __syscall5(SYS_select, nfds, MADDR(readfds), MADDR(writefds), MADDR(exceptfds), MADDR(timeout)),
         "select", 5, nfds, readfds, writefds, exceptfds, timeout);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_pselect6(exec_env, nfds, readfds, writefds, exceptfds, timeout,
-                                 (long)((long[]){ 0, _NSIG / 8 })),
+    RETURN(pselect6_impl(exec_env, nfds, readfds, writefds, exceptfds, timeout,
+                         (long)((long[]){ 0, _NSIG / 8 })),
            "select", 5, nfds, readfds, writefds, exceptfds, timeout);
 #endif
 }
@@ -811,11 +764,11 @@ wali_syscall_dup2(wasm_exec_env_t exec_env, int32_t oldfd, int32_t newfd)
 #elif __aarch64__ || __riscv64__
     /* Dup2 returns newfd while dup3 throws error, handle with case below */
     if (oldfd == newfd) {
-        long r = wali_syscall_fcntl(exec_env, oldfd, F_GETFD, 0);
+        long r = fcntl_impl(exec_env, oldfd, F_GETFD, 0);
         RETURN((r >= 0) ? newfd : r, "dup2", 2, oldfd, newfd);
     }
     else {
-        RETURN(wali_syscall_dup3(exec_env, oldfd, newfd, 0), "dup2", 2, oldfd, newfd);
+        RETURN(dup3_impl(exec_env, oldfd, newfd, 0), "dup2", 2, oldfd, newfd);
     }
 #endif
 }
@@ -1084,25 +1037,7 @@ long
 wali_syscall_fcntl(wasm_exec_env_t exec_env, int32_t fd, int32_t cmd, uint64_t arg)
 {
     SC(fcntl);
-    /* Swap open flags only on F_GETFL and F_SETFL mode for aarch64 */
-    switch (cmd) {
-#if __aarch64__
-        case F_GETFL:
-            RETURN(swap_open_flags(__syscall3(SYS_fcntl, fd, cmd, arg)), "fcntl",
-                   3, fd, cmd, arg);
-        case F_SETFL:
-            RETURN(__syscall3(SYS_fcntl, fd, cmd, swap_open_flags(arg)), "fcntl",
-                   3, fd, cmd, arg);
-#endif
-        case F_GETLK:
-        case F_SETLK:
-        case F_GETOWN_EX:
-        case F_SETOWN_EX:
-            RETURN(__syscall3(SYS_fcntl, fd, cmd, MADDR(arg)), "fcntl", 3, fd, cmd,
-                   arg);
-        default:
-            RETURN(__syscall3(SYS_fcntl, fd, cmd, arg), "fcntl", 3, fd, cmd, arg);
-    }
+    RETURN(fcntl_impl(exec_env, fd, cmd, arg), "fcntl", 3, fd, cmd, arg);
 }
 
 // 73
@@ -1169,7 +1104,7 @@ wali_syscall_rename(wasm_exec_env_t exec_env, WasmMemAddr oldpath, WasmMemAddr n
 #if __x86_64__
     RETURN(__syscall2(SYS_rename, MADDR(oldpath), MADDR(newpath)), "rename", 2, oldpath, newpath);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_renameat2(exec_env, AT_FDCWD, oldpath, AT_FDCWD, newpath, 0),
+    RETURN(renameat2_impl(exec_env, AT_FDCWD, oldpath, AT_FDCWD, newpath, 0),
            "rename", 2, oldpath, newpath);
 #endif
 }
@@ -1182,7 +1117,7 @@ wali_syscall_mkdir(wasm_exec_env_t exec_env, WasmMemAddr pathname, int32_t mode)
 #if __x86_64__
     RETURN(__syscall2(SYS_mkdir, MADDR(pathname), mode), "mkdir", 2, pathname, mode);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_mkdirat(exec_env, AT_FDCWD, pathname, mode), "mkdir", 2, pathname,
+    RETURN(mkdirat_impl(exec_env, AT_FDCWD, pathname, mode), "mkdir", 2, pathname,
            mode);
 #endif
 }
@@ -1195,7 +1130,7 @@ wali_syscall_rmdir(wasm_exec_env_t exec_env, WasmMemAddr pathname)
 #if __x86_64__
     RETURN(__syscall1(SYS_rmdir, MADDR(pathname)), "rmdir", 1, pathname);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_unlinkat(exec_env, AT_FDCWD, pathname, AT_REMOVEDIR), "rmdir",
+    RETURN(unlinkat_impl(exec_env, AT_FDCWD, pathname, AT_REMOVEDIR), "rmdir",
            1, pathname);
 #endif
 }
@@ -1208,7 +1143,7 @@ wali_syscall_link(wasm_exec_env_t exec_env, WasmMemAddr oldpath, WasmMemAddr new
 #if __x86_64__
     RETURN(__syscall2(SYS_link, MADDR(oldpath), MADDR(newpath)), "link", 2, oldpath, newpath);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_linkat(exec_env, AT_FDCWD, oldpath, AT_FDCWD, newpath, 0), "link",
+    RETURN(linkat_impl(exec_env, AT_FDCWD, oldpath, AT_FDCWD, newpath, 0), "link",
            2, oldpath, newpath);
 #endif
 }
@@ -1221,7 +1156,7 @@ wali_syscall_unlink(wasm_exec_env_t exec_env, WasmMemAddr pathname)
 #if __x86_64__
     RETURN(__syscall1(SYS_unlink, MADDR(pathname)), "unlink", 1, pathname);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_unlinkat(exec_env, AT_FDCWD, pathname, 0), "unlink", 1, pathname);
+    RETURN(unlinkat_impl(exec_env, AT_FDCWD, pathname, 0), "unlink", 1, pathname);
 #endif
 }
 
@@ -1233,7 +1168,7 @@ wali_syscall_symlink(wasm_exec_env_t exec_env, WasmMemAddr target, WasmMemAddr l
 #if __x86_64__
     RETURN(__syscall2(SYS_symlink, MADDR(target), MADDR(linkpath)), "symlink", 2, target, linkpath);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_symlinkat(exec_env, target, AT_FDCWD, linkpath), "symlink", 2, target,
+    RETURN(symlinkat_impl(exec_env, target, AT_FDCWD, linkpath), "symlink", 2, target,
            linkpath);
 #endif
 }
@@ -1247,7 +1182,7 @@ wali_syscall_readlink(wasm_exec_env_t exec_env, WasmMemAddr pathname, WasmMemAdd
     RETURN(__syscall3(SYS_readlink, MADDR(pathname), MADDR(buf), bufsiz), "readlink", 3,
            pathname, buf, bufsiz);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_readlinkat(exec_env, AT_FDCWD, pathname, buf, bufsiz), "readlink",
+    RETURN(readlinkat_impl(exec_env, AT_FDCWD, pathname, buf, bufsiz), "readlink",
            3, pathname, buf, bufsiz);
 #endif
 }
@@ -1260,7 +1195,7 @@ wali_syscall_chmod(wasm_exec_env_t exec_env, WasmMemAddr pathname, int32_t mode)
 #if __x86_64__
     RETURN(__syscall2(SYS_chmod, MADDR(pathname), mode), "chmod", 2, pathname, mode);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_fchmodat(exec_env, AT_FDCWD, pathname, mode, 0), "chmod", 2, pathname,
+    RETURN(fchmodat_impl(exec_env, AT_FDCWD, pathname, mode, 0), "chmod", 2, pathname,
            mode);
 #endif
 }
@@ -1281,7 +1216,7 @@ wali_syscall_chown(wasm_exec_env_t exec_env, WasmMemAddr pathname, int32_t owner
 #if __x86_64__
     RETURN(__syscall3(SYS_chown, MADDR(pathname), owner, group), "chown", 3, pathname, owner, group);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_fchownat(exec_env, AT_FDCWD, pathname, owner, group, 0), "chown", 3,
+    RETURN(fchownat_impl(exec_env, AT_FDCWD, pathname, owner, group, 0), "chown", 3,
            pathname, owner, group);
 #endif
 }
@@ -1673,18 +1608,7 @@ long
 wali_syscall_openat(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, int32_t flags, int32_t mode)
 {
     SC(openat);
-    // security check
-    if (strncmp((char *)MADDR(pathname), "/proc/self/mem", 15) == 0) {
-        printf("Unpermitted attempt to open /proc/self/mem.");
-        RETURN(-1, "openat", 4, dirfd, pathname, flags, mode);
-    }
-#if __aarch64__
-    RETURN(__syscall4(SYS_openat, dirfd, MADDR(pathname), swap_open_flags(flags), mode),
-           "openat", 4, dirfd, pathname, flags, mode);
-#else
-    RETURN(__syscall4(SYS_openat, dirfd, MADDR(pathname), flags, mode), "openat", 4, dirfd, pathname,
-           flags, mode);
-#endif
+    RETURN(openat_impl(exec_env, dirfd, pathname, flags, mode), "openat", 4, dirfd, pathname, flags, mode);
 }
 
 // 258
@@ -1692,8 +1616,7 @@ long
 wali_syscall_mkdirat(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, int32_t mode)
 {
     SC(mkdirat);
-    RETURN(__syscall3(SYS_mkdirat, dirfd, MADDR(pathname), mode), "mkdirat", 3, dirfd, pathname,
-           mode);
+    RETURN(mkdirat_impl(exec_env, dirfd, pathname, mode), "mkdirat", 3, dirfd, pathname, mode);
 }
 
 // 260
@@ -1701,7 +1624,7 @@ long
 wali_syscall_fchownat(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, int32_t owner, int32_t group, int32_t flags)
 {
     SC(fchownat);
-    RETURN(__syscall5(SYS_fchownat, dirfd, MADDR(pathname), owner, group, flags), "fchownat", 5,
+    RETURN(fchownat_impl(exec_env, dirfd, pathname, owner, group, flags), "fchownat", 5,
            dirfd, pathname, owner, group, flags);
 }
 
@@ -1719,8 +1642,7 @@ long
 wali_syscall_unlinkat(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, int32_t flags)
 {
     SC(unlinkat);
-    RETURN(__syscall3(SYS_unlinkat, dirfd, MADDR(pathname), flags), "unlinkat", 3, dirfd, pathname,
-           flags);
+    RETURN(unlinkat_impl(exec_env, dirfd, pathname, flags), "unlinkat", 3, dirfd, pathname, flags);
 }
 
 // 265
@@ -1728,7 +1650,7 @@ long
 wali_syscall_linkat(wasm_exec_env_t exec_env, int32_t olddirfd, WasmMemAddr oldpath, int32_t newdirfd, WasmMemAddr newpath, int32_t flags)
 {
     SC(linkat);
-    RETURN(__syscall5(SYS_linkat, olddirfd, MADDR(oldpath), newdirfd, MADDR(newpath), flags), "linkat",
+    RETURN(linkat_impl(exec_env, olddirfd, oldpath, newdirfd, newpath, flags), "linkat",
            5, olddirfd, oldpath, newdirfd, newpath, flags);
 }
 
@@ -1737,7 +1659,7 @@ long
 wali_syscall_symlinkat(wasm_exec_env_t exec_env, WasmMemAddr target, int32_t newdirfd, WasmMemAddr linkpath)
 {
     SC(symlinkat);
-    RETURN(__syscall3(SYS_symlinkat, MADDR(target), newdirfd, MADDR(linkpath)), "symlinkat", 3,
+    RETURN(symlinkat_impl(exec_env, target, newdirfd, linkpath), "symlinkat", 3,
            target, newdirfd, linkpath);
 }
 
@@ -1746,7 +1668,7 @@ long
 wali_syscall_readlinkat(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, WasmMemAddr buf, uint32_t bufsiz)
 {
     SC(readlinkat);
-    RETURN(__syscall4(SYS_readlinkat, dirfd, MADDR(pathname), MADDR(buf), bufsiz),
+    RETURN(readlinkat_impl(exec_env, dirfd, pathname, buf, bufsiz),
            "readlinkat", 4, dirfd, pathname, buf, bufsiz);
 }
 
@@ -1755,7 +1677,7 @@ long
 wali_syscall_fchmodat(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, int32_t mode, int32_t flags)
 {
     SC(fchmodat);
-    RETURN(__syscall4(SYS_fchmodat, dirfd, MADDR(pathname), mode, flags), "fchmodat", 4, dirfd,
+    RETURN(fchmodat_impl(exec_env, dirfd, pathname, mode, flags), "fchmodat", 4, dirfd,
            pathname, mode, flags);
 }
 
@@ -1764,7 +1686,7 @@ long
 wali_syscall_faccessat(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, int32_t mode, int32_t flags)
 {
     SC(faccessat);
-    RETURN(__syscall4(SYS_faccessat, dirfd, MADDR(pathname), mode, flags), "faccessat", 4, dirfd,
+    RETURN(faccessat_impl(exec_env, dirfd, pathname, mode, flags), "faccessat", 4, dirfd,
            pathname, mode, flags);
 }
 
@@ -1773,14 +1695,7 @@ long
 wali_syscall_pselect6(wasm_exec_env_t exec_env, int32_t nfds, WasmMemAddr readfds, WasmMemAddr writefds, WasmMemAddr exceptfds, WasmMemAddr timeout, WasmMemAddr sigmask)
 {
     SC(pselect6);
-    VB("pselect args | nfds: %ld, readfds: %ld, writefds: %ld, exceptfds: %ld, timeout: %ld, sigmask: %ld",
-       nfds, readfds, writefds, exceptfds, timeout, sigmask);
-    Addr wasm_psel_sm = MADDR(sigmask);
-    long sm_struct[2];
-    long *sm_struct_ptr =
-        copy_pselect6_sigmask(exec_env, wasm_psel_sm, sm_struct);
-    RETURN(__syscall6(SYS_pselect6, nfds, MADDR(readfds), MADDR(writefds), MADDR(exceptfds),
-                      MADDR(timeout), sm_struct_ptr),
+    RETURN(pselect6_impl(exec_env, nfds, readfds, writefds, exceptfds, timeout, sigmask),
            "pselect6", 6, nfds, readfds, writefds, exceptfds, timeout, sigmask);
 }
 
@@ -1823,7 +1738,7 @@ wali_syscall_eventfd(wasm_exec_env_t exec_env, int32_t initval)
 #if __x86_64__
     RETURN(__syscall1(SYS_eventfd, initval), "eventfd", 1, initval);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_eventfd2(exec_env, initval, 0), "eventfd", 1, initval);
+    RETURN(eventfd2_impl(exec_env, initval, 0), "eventfd", 1, initval);
 #endif
 }
 
@@ -1836,13 +1751,12 @@ wali_syscall_accept4(wasm_exec_env_t exec_env, int32_t sockfd, WasmMemAddr addr,
            sockfd, addr, addrlen, flags);
 }
 
-// 290 TODO
+// 290
 long
 wali_syscall_eventfd2(wasm_exec_env_t exec_env, int32_t initval, int32_t flags)
 {
     SC(eventfd2);
-    MIS_SC(eventfd2);
-    RETURN(__syscall2(SYS_eventfd2, initval, flags), "eventfd2", 2, initval, flags);
+    RETURN(eventfd2_impl(exec_env, initval, flags), "eventfd2", 2, initval, flags);
 }
 
 // 291
@@ -1858,12 +1772,7 @@ long
 wali_syscall_dup3(wasm_exec_env_t exec_env, int32_t oldfd, int32_t newfd, int32_t flags)
 {
     SC(dup3);
-#if __aarch64__
-    RETURN(__syscall3(SYS_dup3, oldfd, newfd, swap_open_flags(flags)), "dup3", 3, oldfd, newfd,
-           flags);
-#else
-    RETURN(__syscall3(SYS_dup3, oldfd, newfd, flags), "dup3", 3, oldfd, newfd, flags);
-#endif
+    RETURN(dup3_impl(exec_env, oldfd, newfd, flags), "dup3", 3, oldfd, newfd, flags);
 }
 
 // 293
@@ -1871,12 +1780,7 @@ long
 wali_syscall_pipe2(wasm_exec_env_t exec_env, WasmMemAddr pipefd, int32_t flags)
 {
     SC(pipe2);
-#if __aarch64__
-    RETURN(__syscall2(SYS_pipe2, MADDR(pipefd), swap_open_flags(flags)), "pipe2", 2,
-           pipefd, flags);
-#else
-    RETURN(__syscall2(SYS_pipe2, MADDR(pipefd), flags), "pipe2", 2, pipefd, flags);
-#endif
+    RETURN(pipe2_impl(exec_env, pipefd, flags), "pipe2", 2, pipefd, flags);
 }
 
 // 302
@@ -1893,7 +1797,7 @@ long
 wali_syscall_renameat2(wasm_exec_env_t exec_env, int32_t olddirfd, WasmMemAddr oldpath, int32_t newdirfd, WasmMemAddr newpath, int32_t flags)
 {
     SC(renameat2);
-    RETURN(__syscall5(SYS_renameat2, olddirfd, MADDR(oldpath), newdirfd, MADDR(newpath), flags),
+    RETURN(renameat2_impl(exec_env, olddirfd, oldpath, newdirfd, newpath, flags),
            "renameat2", 5, olddirfd, oldpath, newdirfd, newpath, flags);
 }
 
@@ -2188,3 +2092,170 @@ thread_spawn_fail:
 
     RETURN(-1, 0, 0, 0);
 }
+
+/* Engine Bindings for WALI */
+#define NSYMBOL(symbol, fn, sign) { #symbol, (void *)fn, sign, NULL }
+static NativeSymbol wali_native_symbols[] = {
+	/* Syscalls */
+	NSYMBOL (             SYS_read,              wali_syscall_read,     "(iii)I" ),
+	NSYMBOL (            SYS_write,             wali_syscall_write,     "(iii)I" ),
+	NSYMBOL (             SYS_open,              wali_syscall_open,     "(iii)I" ),
+	NSYMBOL (            SYS_close,             wali_syscall_close,       "(i)I" ),
+	NSYMBOL (             SYS_stat,              wali_syscall_stat,      "(ii)I" ),
+	NSYMBOL (            SYS_fstat,             wali_syscall_fstat,      "(ii)I" ),
+	NSYMBOL (            SYS_lstat,             wali_syscall_lstat,      "(ii)I" ),
+	NSYMBOL (             SYS_poll,              wali_syscall_poll,     "(iIi)I" ),
+	NSYMBOL (            SYS_lseek,             wali_syscall_lseek,     "(iIi)I" ),
+	NSYMBOL (             SYS_mmap,              wali_syscall_mmap,  "(iiiiiI)I" ),
+	NSYMBOL (         SYS_mprotect,          wali_syscall_mprotect,     "(iii)I" ),
+	NSYMBOL (           SYS_munmap,            wali_syscall_munmap,      "(ii)I" ),
+	NSYMBOL (              SYS_brk,               wali_syscall_brk,       "(i)I" ),
+	NSYMBOL (     SYS_rt_sigaction,      wali_syscall_rt_sigaction,    "(iiii)I" ),
+	NSYMBOL (   SYS_rt_sigprocmask,    wali_syscall_rt_sigprocmask,    "(iiii)I" ),
+	NSYMBOL (     SYS_rt_sigreturn,      wali_syscall_rt_sigreturn,       "(I)I" ),
+	NSYMBOL (            SYS_ioctl,             wali_syscall_ioctl,     "(iii)I" ),
+	NSYMBOL (          SYS_pread64,           wali_syscall_pread64,    "(iiiI)I" ),
+	NSYMBOL (         SYS_pwrite64,          wali_syscall_pwrite64,    "(iiiI)I" ),
+	NSYMBOL (            SYS_readv,             wali_syscall_readv,     "(iii)I" ),
+	NSYMBOL (           SYS_writev,            wali_syscall_writev,     "(iii)I" ),
+	NSYMBOL (           SYS_access,            wali_syscall_access,      "(ii)I" ),
+	NSYMBOL (             SYS_pipe,              wali_syscall_pipe,       "(i)I" ),
+	NSYMBOL (           SYS_select,            wali_syscall_select,   "(iiiii)I" ),
+	NSYMBOL (      SYS_sched_yield,       wali_syscall_sched_yield,        "()I" ),
+	NSYMBOL (           SYS_mremap,            wali_syscall_mremap,   "(iiiii)I" ),
+	NSYMBOL (            SYS_msync,             wali_syscall_msync,     "(iii)I" ),
+	NSYMBOL (          SYS_madvise,           wali_syscall_madvise,     "(iii)I" ),
+	NSYMBOL (              SYS_dup,               wali_syscall_dup,       "(i)I" ),
+	NSYMBOL (             SYS_dup2,              wali_syscall_dup2,      "(ii)I" ),
+	NSYMBOL (        SYS_nanosleep,         wali_syscall_nanosleep,      "(ii)I" ),
+	NSYMBOL (        SYS_setitimer,         wali_syscall_setitimer,     "(iii)I" ),
+	NSYMBOL (           SYS_getpid,            wali_syscall_getpid,        "()I" ),
+	NSYMBOL (           SYS_socket,            wali_syscall_socket,     "(iii)I" ),
+	NSYMBOL (          SYS_connect,           wali_syscall_connect,     "(iii)I" ),
+	NSYMBOL (           SYS_accept,            wali_syscall_accept,     "(iii)I" ),
+	NSYMBOL (           SYS_sendto,            wali_syscall_sendto,  "(iiiiii)I" ),
+	NSYMBOL (         SYS_recvfrom,          wali_syscall_recvfrom,  "(iiiiii)I" ),
+	NSYMBOL (          SYS_sendmsg,           wali_syscall_sendmsg,     "(iii)I" ),
+	NSYMBOL (          SYS_recvmsg,           wali_syscall_recvmsg,     "(iii)I" ),
+	NSYMBOL (         SYS_shutdown,          wali_syscall_shutdown,      "(ii)I" ),
+	NSYMBOL (             SYS_bind,              wali_syscall_bind,     "(iii)I" ),
+	NSYMBOL (           SYS_listen,            wali_syscall_listen,      "(ii)I" ),
+	NSYMBOL (      SYS_getsockname,       wali_syscall_getsockname,     "(iii)I" ),
+	NSYMBOL (      SYS_getpeername,       wali_syscall_getpeername,     "(iii)I" ),
+	NSYMBOL (       SYS_socketpair,        wali_syscall_socketpair,    "(iiii)I" ),
+	NSYMBOL (       SYS_setsockopt,        wali_syscall_setsockopt,   "(iiiii)I" ),
+	NSYMBOL (       SYS_getsockopt,        wali_syscall_getsockopt,   "(iiiii)I" ),
+	NSYMBOL (             SYS_fork,              wali_syscall_fork,        "()I" ),
+	NSYMBOL (           SYS_execve,            wali_syscall_execve,     "(iii)I" ),
+	NSYMBOL (             SYS_exit,              wali_syscall_exit,       "(i)I" ),
+	NSYMBOL (            SYS_wait4,             wali_syscall_wait4,    "(iiii)I" ),
+	NSYMBOL (             SYS_kill,              wali_syscall_kill,      "(ii)I" ),
+	NSYMBOL (            SYS_uname,             wali_syscall_uname,       "(i)I" ),
+	NSYMBOL (            SYS_fcntl,             wali_syscall_fcntl,     "(iiI)I" ),
+	NSYMBOL (            SYS_flock,             wali_syscall_flock,      "(ii)I" ),
+	NSYMBOL (            SYS_fsync,             wali_syscall_fsync,       "(i)I" ),
+	NSYMBOL (        SYS_fdatasync,         wali_syscall_fdatasync,       "(i)I" ),
+	NSYMBOL (        SYS_ftruncate,         wali_syscall_ftruncate,      "(iI)I" ),
+	NSYMBOL (           SYS_getcwd,            wali_syscall_getcwd,      "(ii)I" ),
+	NSYMBOL (            SYS_chdir,             wali_syscall_chdir,       "(i)I" ),
+	NSYMBOL (           SYS_fchdir,            wali_syscall_fchdir,       "(i)I" ),
+	NSYMBOL (           SYS_rename,            wali_syscall_rename,      "(ii)I" ),
+	NSYMBOL (            SYS_mkdir,             wali_syscall_mkdir,      "(ii)I" ),
+	NSYMBOL (            SYS_rmdir,             wali_syscall_rmdir,       "(i)I" ),
+	NSYMBOL (             SYS_link,              wali_syscall_link,      "(ii)I" ),
+	NSYMBOL (           SYS_unlink,            wali_syscall_unlink,       "(i)I" ),
+	NSYMBOL (          SYS_symlink,           wali_syscall_symlink,      "(ii)I" ),
+	NSYMBOL (         SYS_readlink,          wali_syscall_readlink,     "(iii)I" ),
+	NSYMBOL (            SYS_chmod,             wali_syscall_chmod,      "(ii)I" ),
+	NSYMBOL (           SYS_fchmod,            wali_syscall_fchmod,      "(ii)I" ),
+	NSYMBOL (            SYS_chown,             wali_syscall_chown,     "(iii)I" ),
+	NSYMBOL (           SYS_fchown,            wali_syscall_fchown,     "(iii)I" ),
+	NSYMBOL (            SYS_umask,             wali_syscall_umask,       "(i)I" ),
+	NSYMBOL (     SYS_gettimeofday,      wali_syscall_gettimeofday,      "(ii)I" ),
+	NSYMBOL (        SYS_getrlimit,         wali_syscall_getrlimit,      "(ii)I" ),
+	NSYMBOL (        SYS_getrusage,         wali_syscall_getrusage,      "(ii)I" ),
+	NSYMBOL (          SYS_sysinfo,           wali_syscall_sysinfo,       "(i)I" ),
+	NSYMBOL (           SYS_getuid,            wali_syscall_getuid,        "()I" ),
+	NSYMBOL (           SYS_getgid,            wali_syscall_getgid,        "()I" ),
+	NSYMBOL (           SYS_setuid,            wali_syscall_setuid,       "(i)I" ),
+	NSYMBOL (           SYS_setgid,            wali_syscall_setgid,       "(i)I" ),
+	NSYMBOL (          SYS_geteuid,           wali_syscall_geteuid,        "()I" ),
+	NSYMBOL (          SYS_getegid,           wali_syscall_getegid,        "()I" ),
+	NSYMBOL (          SYS_setpgid,           wali_syscall_setpgid,      "(ii)I" ),
+	NSYMBOL (          SYS_getppid,           wali_syscall_getppid,        "()I" ),
+	NSYMBOL (           SYS_setsid,            wali_syscall_setsid,        "()I" ),
+	NSYMBOL (         SYS_setreuid,          wali_syscall_setreuid,      "(ii)I" ),
+	NSYMBOL (         SYS_setregid,          wali_syscall_setregid,      "(ii)I" ),
+	NSYMBOL (        SYS_getgroups,         wali_syscall_getgroups,      "(ii)I" ),
+	NSYMBOL (        SYS_setgroups,         wali_syscall_setgroups,      "(ii)I" ),
+	NSYMBOL (        SYS_setresuid,         wali_syscall_setresuid,     "(iii)I" ),
+	NSYMBOL (        SYS_setresgid,         wali_syscall_setresgid,     "(iii)I" ),
+	NSYMBOL (          SYS_getpgid,           wali_syscall_getpgid,       "(i)I" ),
+	NSYMBOL (           SYS_getsid,            wali_syscall_getsid,       "(i)I" ),
+	NSYMBOL (    SYS_rt_sigpending,     wali_syscall_rt_sigpending,      "(ii)I" ),
+	NSYMBOL (    SYS_rt_sigsuspend,     wali_syscall_rt_sigsuspend,      "(ii)I" ),
+	NSYMBOL (      SYS_sigaltstack,       wali_syscall_sigaltstack,      "(ii)I" ),
+	NSYMBOL (           SYS_statfs,            wali_syscall_statfs,      "(ii)I" ),
+	NSYMBOL (          SYS_fstatfs,           wali_syscall_fstatfs,      "(ii)I" ),
+	NSYMBOL (            SYS_prctl,             wali_syscall_prctl,   "(iIIII)I" ),
+	NSYMBOL (        SYS_setrlimit,         wali_syscall_setrlimit,      "(ii)I" ),
+	NSYMBOL (           SYS_chroot,            wali_syscall_chroot,       "(i)I" ),
+	NSYMBOL (           SYS_gettid,            wali_syscall_gettid,        "()I" ),
+	NSYMBOL (            SYS_tkill,             wali_syscall_tkill,      "(ii)I" ),
+	NSYMBOL (            SYS_futex,             wali_syscall_futex,  "(iiiiii)I" ),
+	NSYMBOL ( SYS_sched_getaffinity, wali_syscall_sched_getaffinity,     "(iii)I" ),
+	NSYMBOL (       SYS_getdents64,        wali_syscall_getdents64,     "(iii)I" ),
+	NSYMBOL (  SYS_set_tid_address,   wali_syscall_set_tid_address,       "(i)I" ),
+	NSYMBOL (          SYS_fadvise,           wali_syscall_fadvise,    "(iIIi)I" ),
+	NSYMBOL (    SYS_clock_gettime,     wali_syscall_clock_gettime,      "(ii)I" ),
+	NSYMBOL (     SYS_clock_getres,      wali_syscall_clock_getres,      "(ii)I" ),
+	NSYMBOL (  SYS_clock_nanosleep,   wali_syscall_clock_nanosleep,    "(iiii)I" ),
+	NSYMBOL (       SYS_exit_group,        wali_syscall_exit_group,       "(i)I" ),
+	NSYMBOL (        SYS_epoll_ctl,         wali_syscall_epoll_ctl,    "(iiii)I" ),
+	NSYMBOL (           SYS_openat,            wali_syscall_openat,    "(iiii)I" ),
+	NSYMBOL (          SYS_mkdirat,           wali_syscall_mkdirat,     "(iii)I" ),
+	NSYMBOL (         SYS_fchownat,          wali_syscall_fchownat,   "(iiiii)I" ),
+	NSYMBOL (       SYS_newfstatat,        wali_syscall_newfstatat,    "(iiii)I" ),
+	NSYMBOL (         SYS_unlinkat,          wali_syscall_unlinkat,     "(iii)I" ),
+	NSYMBOL (           SYS_linkat,            wali_syscall_linkat,   "(iiiii)I" ),
+	NSYMBOL (        SYS_symlinkat,         wali_syscall_symlinkat,     "(iii)I" ),
+	NSYMBOL (       SYS_readlinkat,        wali_syscall_readlinkat,    "(iiii)I" ),
+	NSYMBOL (         SYS_fchmodat,          wali_syscall_fchmodat,    "(iiii)I" ),
+	NSYMBOL (        SYS_faccessat,         wali_syscall_faccessat,    "(iiii)I" ),
+	NSYMBOL (         SYS_pselect6,          wali_syscall_pselect6,  "(iiiiii)I" ),
+	NSYMBOL (            SYS_ppoll,             wali_syscall_ppoll,   "(iIiii)I" ),
+	NSYMBOL (        SYS_utimensat,         wali_syscall_utimensat,    "(iiii)I" ),
+	NSYMBOL (      SYS_epoll_pwait,       wali_syscall_epoll_pwait,  "(iiiiii)I" ),
+	NSYMBOL (          SYS_eventfd,           wali_syscall_eventfd,       "(i)I" ),
+	NSYMBOL (          SYS_accept4,           wali_syscall_accept4,    "(iiii)I" ),
+	NSYMBOL (         SYS_eventfd2,          wali_syscall_eventfd2,      "(ii)I" ),
+	NSYMBOL (    SYS_epoll_create1,     wali_syscall_epoll_create1,       "(i)I" ),
+	NSYMBOL (             SYS_dup3,              wali_syscall_dup3,     "(iii)I" ),
+	NSYMBOL (            SYS_pipe2,             wali_syscall_pipe2,      "(ii)I" ),
+	NSYMBOL (        SYS_prlimit64,         wali_syscall_prlimit64,    "(iiii)I" ),
+	NSYMBOL (        SYS_renameat2,         wali_syscall_renameat2,   "(iiiii)I" ),
+	NSYMBOL (        SYS_getrandom,         wali_syscall_getrandom,     "(iii)I" ),
+	NSYMBOL (            SYS_statx,             wali_syscall_statx,   "(iiiii)I" ),
+	NSYMBOL (       SYS_faccessat2,        wali_syscall_faccessat2,    "(iiii)I" ),
+
+	/* Auxiliary calls */
+	NSYMBOL (               __init,                      wali_init,        "()i" ),
+	NSYMBOL (             __deinit,                    wali_deinit,        "()i" ),
+	NSYMBOL (          __proc_exit,                 wali_proc_exit,        "(i)" ),
+	NSYMBOL (        __cl_get_argc,               wali_cl_get_argc,        "()i" ),
+	NSYMBOL (    __cl_get_argv_len,           wali_cl_get_argv_len,       "(i)i" ),
+	NSYMBOL (       __cl_copy_argv,              wali_cl_copy_argv,      "(ii)i" ),
+	NSYMBOL (   __get_init_envfile,          wali_get_init_envfile,      "(ii)i" ),
+	NSYMBOL (  __wasm_thread_spawn,         wali_wasm_thread_spawn,      "(ii)i" ),
+	NSYMBOL (            sigsetjmp,                 wali_sigsetjmp,      "(ii)i" ),
+	NSYMBOL (              longjmp,                   wali_longjmp,       "(ii)" ),
+	NSYMBOL (               setjmp,                    wali_setjmp,       "(i)i" ),
+};
+
+uint32
+get_libc_wali_export_apis(NativeSymbol **p_libc_wali_apis)
+{
+    *p_libc_wali_apis = wali_native_symbols;
+    return sizeof(wali_native_symbols) / sizeof(NativeSymbol);
+}
+
