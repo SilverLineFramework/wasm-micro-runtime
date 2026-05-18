@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  wali-test-suite:
+  wali-test-suite-matrix:
     strategy:
       fail-fast: false
       matrix:
@@ -94,3 +94,14 @@ jobs:
         run: |
           $IWASM vim.wasm -n -u NONE -es -c "put! ='Hello from CI'" -c "wq" /tmp/vim_testfile.txt
           grep -q "Hello from CI" /tmp/vim_testfile.txt
+
+  wali-test-suite:
+    needs: wali-test-suite-matrix
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check matrix result
+        run: |
+          if [ "${{ needs.wali-test-suite-matrix.result }}" != "success" ]; then
+            exit 1
+          fi
