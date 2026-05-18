@@ -1,0 +1,63 @@
+name: WALI Test Suite
+
+on:
+  push:
+    branches: [wali]
+  pull_request:
+    branches: [wali]
+  workflow_dispatch:
+
+jobs:
+  wali-test-suite:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runs-on: ubuntu-latest
+          - arch: aarch64
+            runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - name: Checkout current wasm-micro-runtime
+        uses: actions/checkout@v4
+        with:
+          path: wmr-current
+          submodules: false
+
+      - name: Checkout WALI
+        uses: actions/checkout@v4
+        with:
+          repository: Wasm-Thin-Kernel-Interfaces/WALI
+          path: wali
+          submodules: false
+
+      - name: Replace WALI's wasm-micro-runtime with this checkout
+        run: |
+          rm -rf wali/wasm-micro-runtime
+          cp -a wmr-current wali/wasm-micro-runtime
+          rm -rf wali/wasm-micro-runtime/.git
+
+      - name: Install dependencies
+        working-directory: wali
+        run: sudo ./install-deps.sh
+
+      - name: Generate toolchain configs
+        working-directory: wali
+        run: python3 toolchains/gen_toolchains.py
+
+      - name: Build iwasm (from current wasm-micro-runtime)
+        working-directory: wali
+        run: make iwasm
+
+      - name: Build native test binaries
+        working-directory: wali
+        run: make -C tests native
+
+      - name: Setup iwasm symlink for run_tests.py
+        working-directory: wali
+        run: ln -sf "$PWD/build/wamr/iwasm/iwasm" iwasm
+
+      - name: Run test suite
+        working-directory: wali/tests
+        run: python3 run_tests.py
