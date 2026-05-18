@@ -54,6 +54,16 @@ copy2wasm_stat_struct(wasm_exec_env_t exec_env, Addr wasm_stat,
     WR_FIELD(wasm_stat, n_stat->st_ctim, struct timespec);
 }
 
+inline int
+swap_bits(int val, int b1pos, int b2pos)
+{
+    int b1 = (val >> b1pos) & 1;
+    int b2 = (val >> b2pos) & 1;
+    int x = b1 ^ b2;
+    x = ((x << b1pos) | (x << b2pos));
+    return val ^ x;
+}
+
 /* aarch64 swaps O_DIRECTORY <-> O_DIRECT
  *    and O_NOFOLLOW <-> O_LARGEFILE */
 inline int
@@ -68,12 +78,3 @@ swap_open_flags(int open_flags)
     return result;
 }
 
-inline int
-swap_bits(int val, int b1pos, int b2pos)
-{
-    int b1 = (val >> b1pos) & 1;
-    int b2 = (val >> b2pos) & 1;
-    int x = b1 ^ b2;
-    x = ((x << b1pos) | (x << b2pos));
-    return val ^ x;
-}
