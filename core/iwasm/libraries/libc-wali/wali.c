@@ -271,27 +271,20 @@ long native_addr(wasm_exec_env_t exec_env, BufPtr bp) {
     return (bp.ctx == WasmPtr) ? (long) MADDR(bp.val) : bp.val;
 }
 
-long newfstatat_impl(wasm_exec_env_t exec_env, long a1, BufPtr a2, long a3, long a4) {
+long newfstatat_impl(wasm_exec_env_t exec_env, int32_t dirfd, BufPtr pathname, WasmMemAddr statbuf, int32_t flags) {
 #if __x86_64__
-    return __syscall4(SYS_newfstatat, a1, native_addr(exec_env, a2), MADDR(a3), a4);
+    return __syscall4(SYS_newfstatat, dirfd, native_addr(exec_env, pathname), MADDR(statbuf), flags);
 #elif __aarch64__ || __riscv64__
-    Addr wasm_stat = MADDR(a3);
+    Addr wasm_stat = MADDR(statbuf);
     struct stat sb;
-    long retval = __syscall4(SYS_newfstatat, a1, native_addr(exec_env, a2), &sb, a4);
+    long retval = __syscall4(SYS_newfstatat, dirfd, native_addr(exec_env, pathname), &sb, flags);
     copy2wasm_stat_struct(exec_env, wasm_stat, &sb);
     return retval;
 #endif
 }
 
-/* Since poll needs a time conversion on pointer, need to use a different alias
- * call */
-long
-wali_syscall_ppoll_aliased(wasm_exec_env_t exec_env, long a1, long a2, long a3,
-                           long a4, long a5)
-{
-    SC(ppoll - alias);
-    RETURN(__syscall5(SYS_ppoll, MADDR(a1), a2, a3, MADDR(a4), a5),
-           "ppoll_aliased", 5, a1, a2, a3, a4, a5);
+long ppoll_impl(wasm_exec_env_t exec_env, WasmMemAddr fds, uint64_t nfds, BufPtr tmo_p, WasmMemAddr sigmask, uint32_t sigsetsize) {
+    return __syscall5(SYS_ppoll, MADDR(fds), nfds, native_addr(exec_env, tmo_p), MADDR(sigmask), sigsetsize);
 }
 
 void
@@ -394,9 +387,8 @@ wali_syscall_poll(wasm_exec_env_t exec_env, WasmMemAddr fds, uint64_t nfds, int3
 #if __x86_64__
     RETURN(__syscall3(SYS_poll, MADDR(fds), nfds, timeout), "poll", 3, fds, nfds, timeout);
 #elif __aarch64__ || __riscv64__
-    RETURN(wali_syscall_ppoll_aliased(exec_env, fds, nfds,
-                                      (long)CONV_TIME_TO_TS(timeout), 0, _NSIG / 8),
-           "poll", 3, fds, nfds, timeout);
+    long ret = ppoll_impl(exec_env, fds, nfds, (long)CONV_TIME_TO_TS(timeout), 0, _NSIG / 8);
+    RETURN(ret, "poll", 3, fds, nfds, timeout);
 #endif
 }
 
