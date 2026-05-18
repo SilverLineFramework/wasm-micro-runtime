@@ -283,6 +283,17 @@ long newfstatat_impl(wasm_exec_env_t exec_env, long a1, BufPtr a2, long a3, long
 #endif
 }
 
+/* Since poll needs a time conversion on pointer, need to use a different alias
+ * call */
+long
+wali_syscall_ppoll_aliased(wasm_exec_env_t exec_env, long a1, long a2, long a3,
+                           long a4, long a5)
+{
+    SC(ppoll - alias);
+    RETURN(__syscall5(SYS_ppoll, MADDR(a1), a2, a3, MADDR(a4), a5),
+           "ppoll_aliased", 5, a1, a2, a3, a4, a5);
+}
+
 void
 wali_thread_exit(wasm_exec_env_t exec_env, long v)
 {
@@ -1778,16 +1789,6 @@ wali_syscall_ppoll(wasm_exec_env_t exec_env, WasmMemAddr fds, uint64_t nfds, Was
     SC(ppoll);
     RETURN(__syscall5(SYS_ppoll, MADDR(fds), nfds, MADDR(tmo_p), MADDR(sigmask), sigsetsize),
            "ppoll", 5, fds, nfds, tmo_p, sigmask, sigsetsize);
-}
-/* Since poll needs a time conversion on pointer, need to use a different alias
- * call */
-long
-wali_syscall_ppoll_aliased(wasm_exec_env_t exec_env, long a1, long a2, long a3,
-                           long a4, long a5)
-{
-    SC(ppoll - alias);
-    RETURN(__syscall5(SYS_ppoll, MADDR(a1), a2, a3, MADDR(a4), a5),
-           "ppoll_aliased", 5, a1, a2, a3, a4, a5);
 }
 
 // 280
