@@ -13,6 +13,7 @@
 typedef uint8_t *Addr;
 typedef uint32_t FuncPtr_t;
 
+
 #define BASE_ADDR() \
     ({ (Addr) wasm_runtime_addr_app_to_native(get_module_inst(exec_env), 0); })
 
