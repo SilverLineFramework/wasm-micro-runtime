@@ -43,7 +43,7 @@ copy_pselect6_sigmask(wasm_exec_env_t exec_env, Addr wasm_psel_sm,
       return NULL;
     }
     long sigmask_addr = RD_FIELD(wasm_psel_sm, long);
-    sm_struct[0] = (long)MADDR(sigmask_addr);
+    sm_struct[0] = (long)addr_wasm2native(exec_env, sigmask_addr);
     sm_struct[1] = RD_FIELD(wasm_psel_sm, long);
     return sm_struct;
 }
@@ -119,7 +119,7 @@ copy_msghdr(wasm_exec_env_t exec_env, Addr wasm_msghdr)
 void
 copy2wasm_old_ksigaction(int signo, Addr wasm_act, struct k_sigaction *act)
 {
-    FuncPtr_t old_wasm_funcptr;
+    WasmFuncPtr old_wasm_funcptr;
     if (act->handler == SIG_DFL) {
         old_wasm_funcptr = WASM_SIG_DFL;
     }
@@ -131,11 +131,11 @@ copy2wasm_old_ksigaction(int signo, Addr wasm_act, struct k_sigaction *act)
     }
     else {
         old_wasm_funcptr = wali_sigtable[signo].func_table_idx;
-        VB("Save old sigaction handler -- Tbl[%d]", old_wasm_funcptr);
+        VERB("Save old sigaction handler -- Tbl[%d]", old_wasm_funcptr);
     }
-    WR_FIELD(wasm_act, old_wasm_funcptr, FuncPtr_t);
+    WR_FIELD(wasm_act, old_wasm_funcptr, WasmFuncPtr);
     WR_FIELD(wasm_act, act->flags, unsigned long);
-    WR_FIELD(wasm_act, act->restorer, FuncPtr_t);
+    WR_FIELD(wasm_act, act->restorer, WasmFuncPtr);
     WR_FIELD_ARRAY(wasm_act, act->mask, unsigned, 2);
 }
 
@@ -143,22 +143,22 @@ copy2wasm_old_ksigaction(int signo, Addr wasm_act, struct k_sigaction *act)
 struct k_sigaction *
 copy_ksigaction(wasm_exec_env_t exec_env, Addr wasm_act,
                 struct k_sigaction *act, void (*common_handler)(int),
-                FuncPtr_t *target_wasm_funcptr, char *debug_str)
+                WasmFuncPtr *target_wasm_funcptr, char *debug_str)
 {
     if (wasm_act == NULL) {
         return NULL;
     }
 
-    FuncPtr_t wasm_handler_funcptr = RD_FIELD(wasm_act, FuncPtr_t);
-    if (wasm_handler_funcptr == (FuncPtr_t)(WASM_SIG_DFL)) {
+    WasmFuncPtr wasm_handler_funcptr = RD_FIELD(wasm_act, WasmFuncPtr);
+    if (wasm_handler_funcptr == (WasmFuncPtr)(WASM_SIG_DFL)) {
         act->handler = SIG_DFL;
         strcpy(debug_str, "SIG_DFL");
     }
-    else if (wasm_handler_funcptr == (FuncPtr_t)(WASM_SIG_IGN)) {
+    else if (wasm_handler_funcptr == (WasmFuncPtr)(WASM_SIG_IGN)) {
         act->handler = SIG_IGN;
         strcpy(debug_str, "SIG_IGN");
     }
-    else if (wasm_handler_funcptr == (FuncPtr_t)(WASM_SIG_ERR)) {
+    else if (wasm_handler_funcptr == (WasmFuncPtr)(WASM_SIG_ERR)) {
         act->handler = SIG_ERR;
         strcpy(debug_str, "SIG_ERR");
     }
@@ -171,7 +171,7 @@ copy_ksigaction(wasm_exec_env_t exec_env, Addr wasm_act,
 
     act->flags = RD_FIELD(wasm_act, unsigned long);
 
-    RD_FIELD(wasm_act, FuncPtr_t);
+    RD_FIELD(wasm_act, WasmFuncPtr);
     act->restorer = __libc_restore_rt;
 
     RD_FIELD_ARRAY(act->mask, wasm_act, unsigned, 2);

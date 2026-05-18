@@ -4,68 +4,7 @@
 #include "wasm_export.h"
 #include "bh_platform.h"
 #include "aot_export.h"
-#include "wali_defs.h"
-
-/** Logging **/
-#define VB(fmt, ...) LOG_VERBOSE("[wali-log] " fmt, ##__VA_ARGS__)
-
-#define BASE_ADDR() \
-    ({ (Addr) wasm_runtime_addr_app_to_native(get_module_inst(exec_env), 0); })
-
-#define MADDR(wasm_addr)                                                  \
-    ({                                                                    \
-        Addr _maddr_n = wasm_addr ? (Addr)wasm_runtime_addr_app_to_native(\
-                                    get_module_inst(exec_env), wasm_addr) \
-                                  : NULL;                                 \
-        if (_maddr_n == NULL) {                                           \
-        }                                                                 \
-        _maddr_n;                                                         \
-    })
-
-#define WADDR(mem_addr) \
-    ({ wasm_runtime_addr_native_to_app(get_module_inst(exec_env), mem_addr); })
-/** **/
-
-/** Function translations **/
-#define FUNC_IDX(func) ({ wasm_runtime_get_function_idx(module_inst, func); })
-
-/* Needs to be called only for AoT when using wasm_runtime_get_indirect_function
- */
-#define FUNC_FREE(func)                                                       \
-    {                                                                         \
-        if (func                                                              \
-            && (get_module_inst(exec_env)->module_type == Wasm_Module_AoT)) { \
-            wasm_runtime_free(func);                                          \
-        }                                                                     \
-    }
-
-/** Some internal structs for syscalls **/
-
-/* This is the structure used for the rt_sigaction syscall on most archs,
- * but it can be overridden by a file with the same name in the top-level
- * arch dir for a given arch, if necessary. */
-struct k_sigaction {
-    void (*handler)(int);
-    unsigned long flags;
-    void (*restorer)(void);
-    unsigned mask[2];
-};
-
-// Flag to indicate whether a pointer is a Wasm memory address or a native memory address
-typedef enum {
-    WasmPtr = 0,
-    NativePtr = 1
-} PtrCtx;
-
-// Type capturing pointer along with its context
-typedef struct {
-    long val;
-    PtrCtx ctx;
-	wasm_exec_env_t env;
-} BufPtr;
-
-typedef uint32_t WasmMemAddr;
-typedef uint32_t WasmTableInternalIdx;
+#include "defs.h"
 
 /* Syscalls */
 long wali_syscall_read (wasm_exec_env_t exec_env, int32_t fd, WasmMemAddr buf, uint32_t count);
@@ -217,7 +156,7 @@ unsigned int wali_cl_get_argc (wasm_exec_env_t exec_env);
 unsigned int wali_cl_get_argv_len (wasm_exec_env_t exec_env, uint32_t arg_index);
 int wali_cl_copy_argv (wasm_exec_env_t exec_env, WasmMemAddr argbuf, uint32_t arg_index);
 int wali_get_init_envfile (wasm_exec_env_t exec_env, WasmMemAddr pathbuf, uint32_t bufsize);
-int wali_wasm_thread_spawn (wasm_exec_env_t exec_env, WasmTableInternalIdx wasm_start_fn, WasmMemAddr args);
+int wali_wasm_thread_spawn (wasm_exec_env_t exec_env, WasmFuncPtr wasm_start_fn, WasmMemAddr args);
 int wali_sigsetjmp (wasm_exec_env_t exec_env, WasmMemAddr sigjmp_buf, int32_t savesigs);
 void wali_longjmp (wasm_exec_env_t exec_env, WasmMemAddr env, int32_t val);
 int wali_setjmp (wasm_exec_env_t exec_env, WasmMemAddr env);

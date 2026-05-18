@@ -1,5 +1,5 @@
-#ifndef WALI_IMPL_H
-#define WALI_IMPL_H
+#ifndef _WALI_IMPL_H_
+#define _WALI_IMPL_H_
 
 #include "wali.h"
 
@@ -19,16 +19,28 @@
     __syscall6(n, (long)a1, (long)a2, (long)a3, (long)a4, \
                            (long)a5, (long)a6)
 
-/* Logging prefix and severity helpers used by both wali.c and impl.c. */
-#define SCSTR(sc) "[\033[1;36mwali\033[0m::\033[1;33m" #sc "\033[0m] "
 
+/** Logging **/
+#define SCSTR(sc) "[\033[1;36mwali\033[0m::\033[1;33m" #sc "\033[0m] "
 #define WARN_SC(sc, ...) LOG_WARNING(SCSTR(sc) __VA_ARGS__);
 #define ERR_SC(sc, ...)  LOG_ERROR(SCSTR(sc) __VA_ARGS__);
 #define FATAL_SC(sc, ...) LOG_FATAL(SCSTR(sc) __VA_ARGS__);
 #define MIS_SC(sc) FATAL_SC(sc, "Syscall non-existent or unsupported");
 
-/* BufPtr helpers — let `_impl` functions accept either wasm or native
- * pointers without duplicating per-arch translation logic. */
+// Flag to indicate whether a pointer is a Wasm memory address or a native memory address
+typedef enum {
+    WasmPtr = 0,
+    NativePtr = 1
+} PtrCtx;
+
+// Type capturing pointer along with its context
+typedef struct {
+    long val;
+    PtrCtx ctx;
+	wasm_exec_env_t env;
+} BufPtr;
+
+/* BufPtr methods */
 static inline BufPtr wasm_bp(wasm_exec_env_t exec_env, WasmMemAddr bp) {
     return (BufPtr) { .val = (long) bp, .ctx = WasmPtr, .env = exec_env };
 }
@@ -37,11 +49,10 @@ static inline BufPtr native_bp(wasm_exec_env_t exec_env, void* bp) {
 }
 static inline long bp_as_native(BufPtr bp) {
     wasm_exec_env_t exec_env = bp.env;
-    return (bp.ctx == WasmPtr) ? (long) MADDR(bp.val) : bp.val;
+    return (bp.ctx == WasmPtr) ? (long) addr_wasm2native(exec_env, bp.val) : bp.val;
 }
 static inline WasmMemAddr bp_as_wasm(BufPtr bp) {
-    wasm_exec_env_t exec_env = bp.env;
-    return (bp.ctx == WasmPtr) ? bp.val : (long) WADDR((void*) bp.val);
+    return (bp.ctx == WasmPtr) ? bp.val : addr_native2wasm(bp.env, (void*) bp.val);
 }
 
 /* Shared syscall implementations — called by the corresponding

@@ -40,9 +40,9 @@
 
 long newfstatat_impl(wasm_exec_env_t exec_env, int32_t dirfd, BufPtr pathname, WasmMemAddr statbuf, int32_t flags) {
 #if __x86_64__
-    return __syscall4(SYS_newfstatat, dirfd, bp_as_native(pathname), MADDR(statbuf), flags);
+    return __syscall4(SYS_newfstatat, dirfd, bp_as_native(pathname), addr_wasm2native(exec_env, statbuf), flags);
 #elif __aarch64__ || __riscv64__
-    Addr wasm_stat = MADDR(statbuf);
+    Addr wasm_stat = addr_wasm2native(exec_env, statbuf);
     struct stat sb;
     long retval = __syscall4(SYS_newfstatat, dirfd, bp_as_native(pathname), &sb, flags);
     copy2wasm_stat_struct(exec_env, wasm_stat, &sb);
@@ -51,7 +51,7 @@ long newfstatat_impl(wasm_exec_env_t exec_env, int32_t dirfd, BufPtr pathname, W
 }
 
 long ppoll_impl(wasm_exec_env_t exec_env, WasmMemAddr fds, uint64_t nfds, BufPtr tmo_p, WasmMemAddr sigmask, uint32_t sigsetsize) {
-    return __syscall5(SYS_ppoll, MADDR(fds), nfds, bp_as_native(tmo_p), MADDR(sigmask), sigsetsize);
+    return __syscall5(SYS_ppoll, addr_wasm2native(exec_env, fds), nfds, bp_as_native(tmo_p), addr_wasm2native(exec_env, sigmask), sigsetsize);
 }
 
 long fcntl_impl(wasm_exec_env_t exec_env, int32_t fd, int32_t cmd, uint64_t arg) {
@@ -67,7 +67,7 @@ long fcntl_impl(wasm_exec_env_t exec_env, int32_t fd, int32_t cmd, uint64_t arg)
         case F_SETLK:
         case F_GETOWN_EX:
         case F_SETOWN_EX:
-            return __syscall3(SYS_fcntl, fd, cmd, MADDR(arg));
+            return __syscall3(SYS_fcntl, fd, cmd, addr_wasm2native(exec_env, arg));
         default:
             return __syscall3(SYS_fcntl, fd, cmd, arg);
     }
@@ -75,63 +75,63 @@ long fcntl_impl(wasm_exec_env_t exec_env, int32_t fd, int32_t cmd, uint64_t arg)
 
 long openat_impl(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, int32_t flags, int32_t mode) {
     // security check
-    if (strncmp((char *)MADDR(pathname), "/proc/self/mem", 15) == 0) {
+    if (strncmp((char *)addr_wasm2native(exec_env, pathname), "/proc/self/mem", 15) == 0) {
         printf("Unpermitted attempt to open /proc/self/mem.");
         return -1;
     }
 #if __aarch64__
-    return __syscall4(SYS_openat, dirfd, MADDR(pathname), swap_open_flags(flags), mode);
+    return __syscall4(SYS_openat, dirfd, addr_wasm2native(exec_env, pathname), swap_open_flags(flags), mode);
 #else
-    return __syscall4(SYS_openat, dirfd, MADDR(pathname), flags, mode);
+    return __syscall4(SYS_openat, dirfd, addr_wasm2native(exec_env, pathname), flags, mode);
 #endif
 }
 
 long mkdirat_impl(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, int32_t mode) {
-    return __syscall3(SYS_mkdirat, dirfd, MADDR(pathname), mode);
+    return __syscall3(SYS_mkdirat, dirfd, addr_wasm2native(exec_env, pathname), mode);
 }
 
 long fchownat_impl(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, int32_t owner, int32_t group, int32_t flags) {
-    return __syscall5(SYS_fchownat, dirfd, MADDR(pathname), owner, group, flags);
+    return __syscall5(SYS_fchownat, dirfd, addr_wasm2native(exec_env, pathname), owner, group, flags);
 }
 
 long unlinkat_impl(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, int32_t flags) {
-    return __syscall3(SYS_unlinkat, dirfd, MADDR(pathname), flags);
+    return __syscall3(SYS_unlinkat, dirfd, addr_wasm2native(exec_env, pathname), flags);
 }
 
 long linkat_impl(wasm_exec_env_t exec_env, int32_t olddirfd, WasmMemAddr oldpath, int32_t newdirfd, WasmMemAddr newpath, int32_t flags) {
-    return __syscall5(SYS_linkat, olddirfd, MADDR(oldpath), newdirfd, MADDR(newpath), flags);
+    return __syscall5(SYS_linkat, olddirfd, addr_wasm2native(exec_env, oldpath), newdirfd, addr_wasm2native(exec_env, newpath), flags);
 }
 
 long symlinkat_impl(wasm_exec_env_t exec_env, WasmMemAddr target, int32_t newdirfd, WasmMemAddr linkpath) {
-    return __syscall3(SYS_symlinkat, MADDR(target), newdirfd, MADDR(linkpath));
+    return __syscall3(SYS_symlinkat, addr_wasm2native(exec_env, target), newdirfd, addr_wasm2native(exec_env, linkpath));
 }
 
 long readlinkat_impl(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, WasmMemAddr buf, uint32_t bufsiz) {
-    return __syscall4(SYS_readlinkat, dirfd, MADDR(pathname), MADDR(buf), bufsiz);
+    return __syscall4(SYS_readlinkat, dirfd, addr_wasm2native(exec_env, pathname), addr_wasm2native(exec_env, buf), bufsiz);
 }
 
 long fchmodat_impl(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, int32_t mode, int32_t flags) {
-    return __syscall4(SYS_fchmodat, dirfd, MADDR(pathname), mode, flags);
+    return __syscall4(SYS_fchmodat, dirfd, addr_wasm2native(exec_env, pathname), mode, flags);
 }
 
 long faccessat_impl(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, int32_t mode, int32_t flags) {
-    return __syscall4(SYS_faccessat, dirfd, MADDR(pathname), mode, flags);
+    return __syscall4(SYS_faccessat, dirfd, addr_wasm2native(exec_env, pathname), mode, flags);
 }
 
 long pselect6_impl(wasm_exec_env_t exec_env, int32_t nfds, WasmMemAddr readfds, WasmMemAddr writefds, WasmMemAddr exceptfds, WasmMemAddr timeout, WasmMemAddr sigmask) {
-    VB("pselect args | nfds: %ld, readfds: %ld, writefds: %ld, exceptfds: %ld, timeout: %ld, sigmask: %ld",
+    VERB("pselect args | nfds: %ld, readfds: %ld, writefds: %ld, exceptfds: %ld, timeout: %ld, sigmask: %ld",
        nfds, readfds, writefds, exceptfds, timeout, sigmask);
-    Addr wasm_psel_sm = MADDR(sigmask);
+    Addr wasm_psel_sm = addr_wasm2native(exec_env, sigmask);
     long sm_struct[2];
     long *sm_struct_ptr =
         copy_pselect6_sigmask(exec_env, wasm_psel_sm, sm_struct);
-    return __syscall6(SYS_pselect6, nfds, MADDR(readfds), MADDR(writefds), MADDR(exceptfds),
-                      MADDR(timeout), sm_struct_ptr);
+    return __syscall6(SYS_pselect6, nfds, addr_wasm2native(exec_env, readfds), addr_wasm2native(exec_env, writefds), addr_wasm2native(exec_env, exceptfds),
+                      addr_wasm2native(exec_env, timeout), sm_struct_ptr);
 }
 
 long eventfd2_impl(wasm_exec_env_t exec_env, int32_t initval, int32_t flags) {
     // TODO: Support all flags for all ISAs
-    MIS_SC(eventfd2);
+    ERR_SC(eventfd2, "Only supports basic flags for now; so many be incorrect in some cases...");
     return __syscall2(SYS_eventfd2, initval, flags);
 }
 
@@ -145,12 +145,12 @@ long dup3_impl(wasm_exec_env_t exec_env, int32_t oldfd, int32_t newfd, int32_t f
 
 long pipe2_impl(wasm_exec_env_t exec_env, WasmMemAddr pipefd, int32_t flags) {
 #if __aarch64__
-    return __syscall2(SYS_pipe2, MADDR(pipefd), swap_open_flags(flags));
+    return __syscall2(SYS_pipe2, addr_wasm2native(exec_env, pipefd), swap_open_flags(flags));
 #else
-    return __syscall2(SYS_pipe2, MADDR(pipefd), flags);
+    return __syscall2(SYS_pipe2, addr_wasm2native(exec_env, pipefd), flags);
 #endif
 }
 
 long renameat2_impl(wasm_exec_env_t exec_env, int32_t olddirfd, WasmMemAddr oldpath, int32_t newdirfd, WasmMemAddr newpath, int32_t flags) {
-    return __syscall5(SYS_renameat2, olddirfd, MADDR(oldpath), newdirfd, MADDR(newpath), flags);
+    return __syscall5(SYS_renameat2, olddirfd, addr_wasm2native(exec_env, oldpath), newdirfd, addr_wasm2native(exec_env, newpath), flags);
 }

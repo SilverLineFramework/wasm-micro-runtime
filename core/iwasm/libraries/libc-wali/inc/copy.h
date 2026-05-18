@@ -35,6 +35,7 @@
 #include <setjmp.h>
 
 #include "wali.h"
+#include "exports.h"
 #include "../interpreter/sigtable.h"
 
 /** Memory Copy Macros **/
@@ -46,9 +47,9 @@
 
 #define WR_FIELD_ADDR(wptr, nptr)              \
     ({                                         \
-        uint32_t wasm_addr = WADDR(nptr);      \
+        uint32_t wasm_addr = addr_native2wasm(exec_env, nptr);      \
         if (!wasm_addr) {                      \
-            VB("NULL Wasm Address generated"); \
+            VERB("NULL Wasm Address generated"); \
         }                                      \
         WR_FIELD(wptr, wasm_addr, uint32_t);   \
     })
@@ -70,7 +71,7 @@
 #define RD_FIELD_ADDR(ptr)                        \
     ({                                            \
         uint32_t field = RD_FIELD(ptr, uint32_t); \
-        MADDR(field);                             \
+        addr_wasm2native(exec_env, field);                             \
     })
 
 #define RD_FIELD_ARRAY(dest, ptr, ty, num)    \
@@ -80,20 +81,18 @@
     })
 /** **/
 
-/** Debug Macro **/
-#define PRINT_BYTES(var, num)           \
-    {                                   \
-        printf(#var " bytes: ");        \
-        char *v = (char *)var;          \
-        for (int i = 0; i < num; i++) { \
-            printf("%02X ", v[i]);      \
-        }                               \
-        printf("\n");                   \
-    }
-
 // ASM restorer function '__libc_restore_rt'.
 extern void
 __libc_restore_rt();
+
+/* This is the structure used for the rt_sigaction syscall on supported archs */
+struct k_sigaction {
+    void (*handler)(int);
+    unsigned long flags;
+    void (*restorer)(void);
+    unsigned mask[2];
+};
+
 
 /* Copy pselect6 sigmask structure */
 void *
@@ -125,7 +124,7 @@ copy2wasm_old_ksigaction(int signo, Addr wasm_act, struct k_sigaction *act);
 struct k_sigaction *
 copy_ksigaction(wasm_exec_env_t exec_env, Addr wasm_act,
                 struct k_sigaction *act, void (*common_handler)(int),
-                FuncPtr_t *target_wasm_funcptr, char *debug_str);
+                WasmFuncPtr *target_wasm_funcptr, char *debug_str);
 
 /* Copy sigstack structure */
 stack_t *

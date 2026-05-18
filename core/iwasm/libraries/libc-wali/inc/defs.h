@@ -1,6 +1,8 @@
 #ifndef _WALI_DEFS_H_
 #define _WALI_DEFS_H_
 
+#include <stdint.h>
+
 /** Architecture **/
 #ifndef __riscv64__
 #if __riscv
@@ -27,13 +29,15 @@
 #define SIG_SYSCALL_PROF 38
 #define SIG_WASM_THREAD_TERM 39
 
-/** Memory defines/translations **/
-typedef uint8_t *Addr;
-typedef uint32_t FuncPtr_t;
+// Internal logging
+#define VERB(fmt, ...) LOG_VERBOSE("[wali-log] " fmt, ##__VA_ARGS__)
 
-extern bool invoked_wali;
-extern int wali_app_argc;
-extern char **wali_app_argv;
-extern char *wali_app_env_file;
+/** Memory defines/translations **/
+// A pointer to host (native) memory
+typedef uint8_t *Addr;
+// A pointer to a Wasm linear memory address
+typedef uint32_t WasmMemAddr;
+// A pointer to a Wasm function (index into table)
+typedef uint32_t WasmFuncPtr;
 
 #endif

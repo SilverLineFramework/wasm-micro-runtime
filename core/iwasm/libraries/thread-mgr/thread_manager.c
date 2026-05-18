@@ -18,7 +18,7 @@
 #endif
 
 #if WASM_ENABLE_LIBC_WALI != 0
-#include "../../../libc-wali/inc/wali_defs.h"
+#include "../../../libc-wali/inc/defs.h"
 #endif
 
 typedef struct {

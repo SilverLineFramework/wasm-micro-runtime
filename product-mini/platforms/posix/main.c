@@ -24,7 +24,7 @@
 #endif
 
 #if WASM_ENABLE_LIBC_WALI != 0
-#include "../libraries/libc-wali/inc/wali_defs.h"
+#include "../libraries/libc-wali/inc/wali_init.h"
 extern int strace;
 extern FILE *strace_logfile;
 #endif
