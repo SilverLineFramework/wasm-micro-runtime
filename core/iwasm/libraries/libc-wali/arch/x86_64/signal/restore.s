@@ -6,3 +6,5 @@ __libc_restore_rt:
 __libc_restore:
 	movl $15, %eax
 	syscall
+
+.section .note.GNU-stack,"",@progbits

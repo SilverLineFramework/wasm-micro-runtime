@@ -6,3 +6,5 @@ __libc_restore_rt:
 __libc_restore:
 	mov x8,#139 // SYS_rt_sigreturn
 	svc 0
+
+.section .note.GNU-stack,"",%progbits

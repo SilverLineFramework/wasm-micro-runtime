@@ -27,6 +27,10 @@
 #define SIG_SYSCALL_PROF 38
 #define SIG_WASM_THREAD_TERM 39
 
+/** Memory defines/translations **/
+typedef uint8_t *Addr;
+typedef uint32_t FuncPtr_t;
+
 extern bool invoked_wali;
 extern int wali_app_argc;
 extern char **wali_app_argv;
