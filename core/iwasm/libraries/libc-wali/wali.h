@@ -66,6 +66,7 @@ typedef enum {
 typedef struct {
     long val;
     PtrCtx ctx;
+	wasm_exec_env_t env;
 } BufPtr;
 
 typedef uint32_t WasmMemAddr;

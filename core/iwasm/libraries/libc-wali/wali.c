@@ -267,24 +267,36 @@ strace_print(long syscall_res, char *syscall_name, int num_args, ...)
 }
 
 
-long native_addr(wasm_exec_env_t exec_env, BufPtr bp) {
+BufPtr wasm_bp(wasm_exec_env_t exec_env, WasmMemAddr bp) {
+    return (BufPtr) { .val = (long) bp, .ctx = WasmPtr, .env = exec_env };
+}
+BufPtr native_bp(wasm_exec_env_t exec_env, void* bp) {
+    return (BufPtr) { .val = (long) bp, .ctx = NativePtr, .env = exec_env };
+}
+
+long bp_as_native(BufPtr bp) {
+    wasm_exec_env_t exec_env = bp.env;
     return (bp.ctx == WasmPtr) ? (long) MADDR(bp.val) : bp.val;
+}
+WasmMemAddr bp_as_wasm(BufPtr bp) {
+    wasm_exec_env_t exec_env = bp.env;
+    return (bp.ctx == WasmPtr) ? bp.val : (long) WADDR((void*) bp.val);
 }
 
 long newfstatat_impl(wasm_exec_env_t exec_env, int32_t dirfd, BufPtr pathname, WasmMemAddr statbuf, int32_t flags) {
 #if __x86_64__
-    return __syscall4(SYS_newfstatat, dirfd, native_addr(exec_env, pathname), MADDR(statbuf), flags);
+    return __syscall4(SYS_newfstatat, dirfd, bp_as_native(pathname), MADDR(statbuf), flags);
 #elif __aarch64__ || __riscv64__
     Addr wasm_stat = MADDR(statbuf);
     struct stat sb;
-    long retval = __syscall4(SYS_newfstatat, dirfd, native_addr(exec_env, pathname), &sb, flags);
+    long retval = __syscall4(SYS_newfstatat, dirfd, bp_as_native(pathname), &sb, flags);
     copy2wasm_stat_struct(exec_env, wasm_stat, &sb);
     return retval;
 #endif
 }
 
 long ppoll_impl(wasm_exec_env_t exec_env, WasmMemAddr fds, uint64_t nfds, BufPtr tmo_p, WasmMemAddr sigmask, uint32_t sigsetsize) {
-    return __syscall5(SYS_ppoll, MADDR(fds), nfds, native_addr(exec_env, tmo_p), MADDR(sigmask), sigsetsize);
+    return __syscall5(SYS_ppoll, MADDR(fds), nfds, bp_as_native(tmo_p), MADDR(sigmask), sigsetsize);
 }
 
 void
@@ -356,7 +368,7 @@ wali_syscall_fstat(wasm_exec_env_t exec_env, int32_t fd, WasmMemAddr statbuf)
 #if __x86_64__
     RETURN(__syscall2(SYS_fstat, fd, MADDR(statbuf)), "fstat", 2, fd, statbuf);
 #elif __aarch64__ || __riscv64__
-    int ret = newfstatat_impl(exec_env, fd, (BufPtr){ .val = (long)&"", .ctx = NativePtr }, statbuf, AT_EMPTY_PATH);
+    int ret = newfstatat_impl(exec_env, fd, native_bp(exec_env, &""), statbuf, AT_EMPTY_PATH);
     RETURN(ret, "fstat", 2, fd, statbuf);
 #endif
 }
@@ -375,10 +387,6 @@ wali_syscall_lstat(wasm_exec_env_t exec_env, WasmMemAddr pathname, WasmMemAddr s
 #endif
 }
 
-#define CONV_TIME_TO_TS(x)                                              \
-    ((x >= 0) ? &((struct timespec){ .tv_sec = x / 1000,                \
-                                     .tv_nsec = (x % 1000) * 1000000 }) \
-              : 0)
 // 7
 long
 wali_syscall_poll(wasm_exec_env_t exec_env, WasmMemAddr fds, uint64_t nfds, int32_t timeout)
@@ -387,7 +395,9 @@ wali_syscall_poll(wasm_exec_env_t exec_env, WasmMemAddr fds, uint64_t nfds, int3
 #if __x86_64__
     RETURN(__syscall3(SYS_poll, MADDR(fds), nfds, timeout), "poll", 3, fds, nfds, timeout);
 #elif __aarch64__ || __riscv64__
-    long ret = ppoll_impl(exec_env, fds, nfds, (BufPtr){ .val = CONV_TIME_TO_TS(timeout), .ctx = NativePtr }, 0, _NSIG / 8);
+    struct timespec* tmo_p = ((timeout >= 0) ? &((struct timespec){ .tv_sec = timeout / 1000, .tv_nsec = (timeout % 1000) * 1000000 }) 
+        : 0);
+    long ret = ppoll_impl(exec_env, fds, nfds, native_bp(exec_env, tmo_p), 0, _NSIG / 8);
     RETURN(ret, "poll", 3, fds, nfds, timeout);
 #endif
 }
@@ -1700,7 +1710,7 @@ long
 wali_syscall_newfstatat(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathname, WasmMemAddr statbuf, int32_t flags)
 {
     SC(newfstatat);
-    int ret = newfstatat_impl(exec_env, dirfd, (BufPtr){ .val = pathname, .ctx = WasmPtr }, statbuf, flags);
+    int ret = newfstatat_impl(exec_env, dirfd, wasm_bp(exec_env, pathname), statbuf, flags);
     RETURN(ret, "newfstatat", 4, dirfd, pathname, statbuf, flags);
 }
 
@@ -1779,7 +1789,7 @@ long
 wali_syscall_ppoll(wasm_exec_env_t exec_env, WasmMemAddr fds, uint64_t nfds, WasmMemAddr tmo_p, WasmMemAddr sigmask, uint32_t sigsetsize)
 {
     SC(ppoll);
-    long ret = ppoll_impl(exec_env, fds, nfds, (BufPtr){ .val = tmo_p, .ctx = WasmPtr }, sigmask, sigsetsize);
+    long ret = ppoll_impl(exec_env, fds, nfds, wasm_bp(exec_env, tmo_p), sigmask, sigsetsize);
     RETURN(ret, "ppoll", 5, fds, nfds, tmo_p, sigmask, sigsetsize);
 }
 
