@@ -26,7 +26,7 @@
 #define WALI_COPY_ARCH_H
 
 /* Copy for differing `struct stat` */
-extern inline void
+void
 copy2wasm_stat_struct(wasm_exec_env_t exec_env, Addr wasm_stat,
                       struct stat *n_stat)
 {
@@ -54,29 +54,6 @@ copy2wasm_stat_struct(wasm_exec_env_t exec_env, Addr wasm_stat,
     WR_FIELD(wasm_stat, n_stat->st_atim, struct timespec);
     WR_FIELD(wasm_stat, n_stat->st_mtim, struct timespec);
     WR_FIELD(wasm_stat, n_stat->st_ctim, struct timespec);
-}
-
-extern inline int
-swap_bits(int val, int b1pos, int b2pos)
-{
-    int b1 = (val >> b1pos) & 1;
-    int b2 = (val >> b2pos) & 1;
-    int x = b1 ^ b2;
-    x = ((x << b1pos) | (x << b2pos));
-    return val ^ x;
-}
-/* aarch64 swaps O_DIRECTORY <-> O_DIRECT
- *    and O_NOFOLLOW <-> O_LARGEFILE */
-extern inline int
-swap_open_flags(int open_flags)
-{
-    int odirectory_shf = __builtin_ctz(O_DIRECTORY);
-    int odirect_shf = __builtin_ctz(O_DIRECT);
-    int olargefile_shf = __builtin_ctz(O_LARGEFILE);
-    int onofollow_shf = __builtin_ctz(O_NOFOLLOW);
-    int one_swap = swap_bits(open_flags, odirectory_shf, odirect_shf);
-    int result = swap_bits(one_swap, olargefile_shf, onofollow_shf);
-    return result;
 }
 
 #endif

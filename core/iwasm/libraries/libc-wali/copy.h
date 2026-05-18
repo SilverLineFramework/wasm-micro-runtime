@@ -139,4 +139,9 @@ copy2wasm_sigstack(wasm_exec_env_t exec_env, Addr wasm_sigstack, stack_t *ss);
 char **
 copy_stringarr(wasm_exec_env_t exec_env, Addr wasm_arr);
 
+/** Architecture-specific copies **/
+#if __has_include("copy_arch.h")
+#include "copy_arch.h"
+#endif
+
 #endif

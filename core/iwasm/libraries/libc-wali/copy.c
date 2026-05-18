@@ -32,12 +32,6 @@
 
 #include "copy.h"
 
-/** Architecture-specific copies **/
-#if __has_include("copy_arch.c")
-#include "copy_arch.c"
-#endif
-
-
 /* Copy pselect6 sigmask structure */
 void *
 copy_pselect6_sigmask(wasm_exec_env_t exec_env, Addr wasm_psel_sm,
