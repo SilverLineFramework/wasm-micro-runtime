@@ -387,7 +387,7 @@ wali_syscall_poll(wasm_exec_env_t exec_env, WasmMemAddr fds, uint64_t nfds, int3
 #if __x86_64__
     RETURN(__syscall3(SYS_poll, MADDR(fds), nfds, timeout), "poll", 3, fds, nfds, timeout);
 #elif __aarch64__ || __riscv64__
-    long ret = ppoll_impl(exec_env, fds, nfds, (long)CONV_TIME_TO_TS(timeout), 0, _NSIG / 8);
+    long ret = ppoll_impl(exec_env, fds, nfds, (BufPtr){ .val = CONV_TIME_TO_TS(timeout), .ctx = NativePtr }, 0, _NSIG / 8);
     RETURN(ret, "poll", 3, fds, nfds, timeout);
 #endif
 }
@@ -1779,8 +1779,8 @@ long
 wali_syscall_ppoll(wasm_exec_env_t exec_env, WasmMemAddr fds, uint64_t nfds, WasmMemAddr tmo_p, WasmMemAddr sigmask, uint32_t sigsetsize)
 {
     SC(ppoll);
-    RETURN(__syscall5(SYS_ppoll, MADDR(fds), nfds, MADDR(tmo_p), MADDR(sigmask), sigsetsize),
-           "ppoll", 5, fds, nfds, tmo_p, sigmask, sigsetsize);
+    long ret = ppoll_impl(exec_env, fds, nfds, (BufPtr){ .val = tmo_p, .ctx = WasmPtr }, sigmask, sigsetsize);
+    RETURN(ret, "ppoll", 5, fds, nfds, tmo_p, sigmask, sigsetsize);
 }
 
 // 280
