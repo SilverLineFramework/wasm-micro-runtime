@@ -10,7 +10,7 @@ include_directories(${LIBC_WALI_DIR}/arch/${ARCH})
 
 # Setup files to compile
 file (GLOB_RECURSE wali_arch_sources 
-    ${LIBC_WALI_DIR}/arch/${ARCH}/*.s 
+    ${LIBC_WALI_DIR}/arch/${ARCH}/*.s
     )
 set (WALI_SOURCES ${LIBC_WALI_DIR}/wali.c ${LIBC_WALI_DIR}/impl.c ${LIBC_WALI_DIR}/copy.c ${wali_arch_sources})
 

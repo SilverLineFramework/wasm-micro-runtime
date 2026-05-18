@@ -22,14 +22,35 @@
   SOFTWARE.
 */
 
-#ifndef _WALI_COPY_ARCH_H_
-#define _WALI_COPY_ARCH_H_
+#include "copy_arch.h"
 
-/* Copy for `struct stat` into correct ABI */
+/* Copy for differing `struct stat` */
 void
-copy2wasm_stat_struct(wasm_exec_env_t exec_env, Addr wasm_stat, struct stat *n_stat);
+copy2wasm_stat_struct(wasm_exec_env_t exec_env, Addr wasm_stat,
+                      struct stat *n_stat)
+{
+    if (n_stat == NULL) {
+        return;
+    }
+    WR_FIELD(wasm_stat, n_stat->st_dev, uint64_t);
+    WR_FIELD(wasm_stat, n_stat->st_ino, uint64_t);
 
-/* Swap open flags to match native ABI */
-inline int swap_open_flags(int open_flags);
+    long nlink = n_stat->st_nlink;
+    WR_FIELD(wasm_stat, nlink, uint64_t);
+    WR_FIELD(wasm_stat, n_stat->st_mode, uint32_t);
 
-#endif
+    WR_FIELD(wasm_stat, n_stat->st_uid, uint32_t);
+    WR_FIELD(wasm_stat, n_stat->st_gid, uint32_t);
+    int pad = 0;
+    WR_FIELD(wasm_stat, pad, uint32_t); // Pad
+    WR_FIELD(wasm_stat, n_stat->st_rdev, uint64_t);
+    WR_FIELD(wasm_stat, n_stat->st_size, uint64_t);
+
+    long blksize = n_stat->st_blksize;
+    WR_FIELD(wasm_stat, blksize, uint64_t);
+    WR_FIELD(wasm_stat, n_stat->st_blocks, uint64_t);
+
+    WR_FIELD(wasm_stat, n_stat->st_atim, struct timespec);
+    WR_FIELD(wasm_stat, n_stat->st_mtim, struct timespec);
+    WR_FIELD(wasm_stat, n_stat->st_ctim, struct timespec);
+}

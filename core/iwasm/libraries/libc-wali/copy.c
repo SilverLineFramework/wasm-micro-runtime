@@ -224,3 +224,9 @@ copy_stringarr(wasm_exec_env_t exec_env, Addr wasm_arr)
     stringarr[num_strings] = NULL;
     return stringarr;
 }
+
+/** Architecture-specific copies **/
+#if __has_include("copy_arch.c")
+#include "copy_arch.c"
+#endif
+
