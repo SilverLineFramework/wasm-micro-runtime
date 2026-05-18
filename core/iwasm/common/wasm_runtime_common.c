@@ -40,7 +40,7 @@
 #include "../common/wasm_c_api_internal.h"
 #include "../../version.h"
 #if WASM_ENABLE_LIBC_WALI != 0
-#include "../libraries/libc-wali/wali_init.h"
+#include "../libraries/libc-wali/inc/wali_init.h"
 #endif
 
 /**

@@ -6,7 +6,7 @@ set (ARCH ${CMAKE_SYSTEM_PROCESSOR})
 
 add_definitions (-DWASM_ENABLE_LIBC_WALI=1)
 
-include_directories(${LIBC_WALI_DIR}/arch/${ARCH})
+include_directories(${LIBC_WALI_DIR}/arch/${ARCH} ${LIBC_WALI_DIR}/inc)
 
 # Setup files to compile
 file (GLOB_RECURSE wali_arch_sources 

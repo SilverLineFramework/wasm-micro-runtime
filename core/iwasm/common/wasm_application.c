@@ -23,7 +23,7 @@
 #include "../../shared/mem-alloc/mem_alloc.h"
 #endif
 #if WASM_ENABLE_LIBC_WALI != 0
-#include "../libraries/libc-wali/wali_defs.h"
+#include "../libraries/libc-wali/inc/wali_defs.h"
 #endif
 
 static void
