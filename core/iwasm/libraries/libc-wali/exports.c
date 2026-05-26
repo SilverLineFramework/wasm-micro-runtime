@@ -51,3 +51,22 @@ void wasm_func_free(wasm_exec_env_t exec_env, wasm_function_inst_t func) {
         wasm_runtime_free(func);
     }
 }
+
+uint32_t get_current_memory_size(wasm_exec_env_t exec_env) {
+    wasm_module_inst_t module_inst = get_module_inst(exec_env);
+    wasm_function_inst_t memorysize_fn =
+        wasm_runtime_lookup_function(module_inst, "__wasm_memory_size");
+    uint32_t cur_wasm_pages[1];
+    uint32_t mem_size = 0;
+    if (memorysize_fn
+        && wasm_runtime_call_wasm(exec_env, memorysize_fn, 0, cur_wasm_pages)) {
+        // Success
+        VERB("Used \'__wasm_memory_size\' export for size query");
+        mem_size = cur_wasm_pages[0] * WASM_PAGESIZE;
+    }
+    else {
+        // Failure: Fallback to internal implementation
+        mem_size = wasm_runtime_get_memory_size(get_module_inst(exec_env));
+    }
+    return mem_size;
+}

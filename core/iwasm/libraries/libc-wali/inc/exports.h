@@ -36,4 +36,6 @@ Addr addr_wasm2native(wasm_exec_env_t exec_env, WasmMemAddr wasm_addr);
 
 void wasm_func_free(wasm_exec_env_t exec_env, wasm_function_inst_t func);
 
+uint32_t get_current_memory_size(wasm_exec_env_t exec_env);
+
 #endif

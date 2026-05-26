@@ -1497,7 +1497,7 @@ wasm_runtime_instantiate(WASMModuleCommon *module, uint32 stack_size,
         module, NULL, NULL, stack_size, heap_size, 0, error_buf,
         error_buf_size);
 #if WASM_ENABLE_LIBC_WALI != 0
-    wali_init_native(module_inst);
+    wali_init_native();
 #endif
     return module_inst;
 }

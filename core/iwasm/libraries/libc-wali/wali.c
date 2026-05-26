@@ -72,16 +72,6 @@ uint32_t THREAD_ID = 0; // unused atm
 int strace = -1;             // -1=no, 0=print to stdout, 1=print to file
 FILE *strace_logfile = NULL; // test
 
-/** Miscellaneous Callbacks **/
-wasm_module_inst_t main_mod_inst = NULL;
-
-void
-wali_memory_profile_dump(int signo)
-{
-    wasm_runtime_dump_mem_consumption(
-        wasm_runtime_get_exec_env_singleton(main_mod_inst));
-}
-
 /* Dummy callback to be invoked after termination flags are set
  * for all threads in process */
 void
@@ -92,33 +82,26 @@ wali_terminate_process_sighandler(int signo)
 /** **/
 
 /* Startup init */
-void
-wali_init_native(wasm_module_inst_t module_inst)
-{
+// Global initialization for WALI -- called once per process
+void wali_global_init() {
     if (sem_init(&tid_sem, 0, 0)) {
         perror("sem_init");
     }
 
-    main_mod_inst = module_inst;
-    is_multithreaded = false;
-    proc_exit_invoked = false;
-
-    // Register signals for profiling / termination
+    // Register signals for termination
     struct sigaction act = { 0 };
-#if WASM_ENABLE_MEMORY_PROFILING
-    act.sa_handler = wali_memory_profile_dump;
-    sigemptyset(&act.sa_mask);
-    if (sigaction(SIG_MEM_PROF, &act, NULL) == -1) {
-        perror("Could not install WALI memory prof signal\n");
-        exit(1);
-    }
-#endif
-
     act.sa_handler = wali_terminate_process_sighandler;
     if (sigaction(SIG_WASM_THREAD_TERM, &act, NULL) == -1) {
         perror("Could not install WALI termination signal\n");
         exit(1);
     }
+
+}
+
+// Instance-specific state initialization for WALI -- called once per module instance
+void wali_instance_init(wasm_module_inst_t module_inst) {
+    is_multithreaded = false;
+    proc_exit_invoked = false;
 
     NATIVE_PAGESIZE = sysconf(_SC_PAGE_SIZE);
     MMAP_PAGELEN = 0;
@@ -127,50 +110,12 @@ wali_init_native(wasm_module_inst_t module_inst)
     THREAD_ID = 1;
 }
 
-/** Helper methods **/
-static uint32_t
-get_current_memory_size(wasm_exec_env_t exec_env)
-{
-    wasm_module_inst_t module_inst = get_module_inst(exec_env);
-    wasm_function_inst_t memorysize_fn =
-        wasm_runtime_lookup_function(module_inst, "__wasm_memory_size");
-    uint32_t cur_wasm_pages[1];
-    uint32_t mem_size = 0;
-    if (memorysize_fn
-        && wasm_runtime_call_wasm(exec_env, memorysize_fn, 0, cur_wasm_pages)) {
-        // Success
-        VERB("Used \'__wasm_memory_size\' export for size query");
-        mem_size = cur_wasm_pages[0] * WASM_PAGESIZE;
-    }
-    else {
-        // Failure: Fallback to internal implementation
-        mem_size = wasm_runtime_get_memory_size(get_module_inst(exec_env));
-    }
-    return mem_size;
+// TODO: Factor this out
+void wali_init_native() {
+    wali_global_init();
+    wali_instance_init(NULL);
 }
 
-/* CURRENTLY UNUSED: WAMR internal API for memory.grow performs
- * additional OS protection when growing memory which may interfere with
- * any mmap specifications */
-__attribute__((used)) static void
-grow_memory_size(wasm_exec_env_t exec_env, uint32_t inc_wasm_pages)
-{
-    wasm_module_inst_t module_inst = get_module_inst(exec_env);
-    wasm_function_inst_t memorygrow_fn =
-        wasm_runtime_lookup_function(module_inst, "__wasm_memory_grow");
-    uint32_t prev_wasm_pages[1] = { inc_wasm_pages };
-    if (memorygrow_fn
-        && wasm_runtime_call_wasm(exec_env, memorygrow_fn, 1,
-                                  prev_wasm_pages)) {
-        // Success
-        VERB("Used \'__wasm_memory_grow\' export for grow query");
-    }
-    else {
-        // Failure: Fallback to internal implementation
-        wasm_enlarge_memory((WASMModuleInstance *)module_inst, inc_wasm_pages,
-                            true);
-    }
-}
 
 /* Get page aligned address after memory to mmap; since base is mapped it's
  * already aligned, and memory data size is a multiple of 64kB but rounding
@@ -186,9 +131,6 @@ Addr align_mmap_addr(wasm_exec_env_t exec_env) {
     }
     return palign;
 }
-
-/* SCSTR, MIS_SC, FATAL_SC, WARN_SC, ERR_SC, and the __syscallN wrappers
- * are defined in impl.h (shared with impl.c). */
 
 /* This implicitly checks for process exits, use carefully.
   We can return -1 within if process exit since CHECK_SUSPEND will
@@ -986,7 +928,7 @@ wali_syscall_execve(wasm_exec_env_t exec_env, WasmMemAddr pathname, WasmMemAddr 
     RETURN(retval, "execve", 3, pathname, argv, envp);
 }
 
-// 60 TODO
+// 60 
 long
 wali_syscall_exit(wasm_exec_env_t exec_env, int32_t status)
 {
