@@ -45,35 +45,59 @@ CopyCtx ctx(wasm_exec_env_t env, Addr ptr, WasmMemAddr wasm_ptr, size_t target_s
         .wasm_ptr = addr_wasm2native(env, wasm_ptr) };
 }
 
-
 // A wasm-to-native memory copy when the fields being copied match up
 void cp_w2n(CopyCtx *ctx, size_t field_size) {
-
+    memcpy(ctx->ptr, ctx->wasm_ptr, field_size);
+    ctx->wasm_ptr += field_size;
+    ctx->ptr += field_size;
 }
 
-// A wasm-to-native memory copy for fields with different sizes 
-void cp_w2n_sext(CopyCtx *ctx, size_t wasm_field_size, size_t native_field_size) {
+// A wasm-to-native memory copy for fields with different sizes, with optional sign-extension
+void cp_w2n_ext(CopyCtx *ctx, size_t wasm_field_size, size_t native_field_size, bool sext) {
+    size_t common = wasm_field_size < native_field_size ? wasm_field_size : native_field_size;
+    memcpy(ctx->ptr, ctx->wasm_ptr, common);
+    if (native_field_size > wasm_field_size) {
+        // Sign-extend: on LE, the MSB lives in the highest-address byte we just wrote.
+        uint8_t fill = (sext && (((uint8_t*)ctx->ptr)[common - 1] & 0x80)) ? 0xFF : 0x00;
+        memset(ctx->ptr + common, fill, native_field_size - common);
+    }
+    ctx->wasm_ptr += wasm_field_size;
+    ctx->ptr += native_field_size;
 }
 
 // A wasm-to-native memory copy specialized for pointer/address fields
 void cp_w2n_ptr(CopyCtx *ctx) {
+    WasmMemAddr w;
+    memcpy(&w, ctx->wasm_ptr, sizeof w);
+    Addr native = addr_wasm2native(ctx->env, w);
+    memcpy(ctx->ptr, &native, sizeof native);
+    ctx->wasm_ptr += sizeof w;
+    ctx->ptr += sizeof native;
 }
 
 // A native-to-wasm memory copy
 void cp_n2w(CopyCtx *ctx, size_t field_size) {
-
+    memcpy(ctx->wasm_ptr, ctx->ptr, field_size);
+    ctx->ptr += field_size;
+    ctx->wasm_ptr += field_size;
 }
 
 // A native-to-wasm memory copy specialized for pointer/address fields
 void cp_n2w_ptr(CopyCtx *ctx) {
+    Addr native;
+    memcpy(&native, ctx->ptr, sizeof native);
+    WasmMemAddr w = addr_native2wasm(ctx->env, native);
+    memcpy(ctx->wasm_ptr, &w, sizeof w);
+    ctx->ptr += sizeof native;
+    ctx->wasm_ptr += sizeof w;
 }
 
 
 /** Memory Copy Macros **/
 #define WR_FIELD(wptr, val, ty)         \
     ({                                  \
-        memcpy(wptr, &val, sizeof(ty)); \
-        wptr += sizeof(ty);             \
+        memcpy(wptr, &val, sizeof(ty) ); \
+        wptr += sizeof(ty) ;             \
     })
 
 #define WR_FIELD_ADDR(wptr, nptr)              \
@@ -298,7 +322,7 @@ copy_stringarr(wasm_exec_env_t exec_env, Addr wasm_arr)
     while ((str = (char *)RD_FIELD_ADDR(arr_it))) {
         num_strings++;
     }
-    char **stringarr = (char **)malloc((num_strings + 1) * sizeof(char *));
+    char **stringarr = (char **)malloc((num_strings + 1) * sizeof(char*));
     for (int i = 0; i < num_strings; i++) {
         stringarr[i] = (char *)RD_FIELD_ADDR(wasm_arr);
     }
