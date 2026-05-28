@@ -35,25 +35,19 @@ typedef enum {
 
 // Type capturing pointer along with its context
 typedef struct {
-    long val;
+    union {
+        Addr ptr;
+        WasmMemAddr wasm_ptr;
+    } val;
     PtrCtx ctx;
 	wasm_exec_env_t env;
 } BufPtr;
 
-/* BufPtr methods */
-static inline BufPtr wasm_bp(wasm_exec_env_t exec_env, WasmMemAddr bp) {
-    return (BufPtr) { .val = (long) bp, .ctx = WasmPtr, .env = exec_env };
-}
-static inline BufPtr native_bp(wasm_exec_env_t exec_env, void* bp) {
-    return (BufPtr) { .val = (long) bp, .ctx = NativePtr, .env = exec_env };
-}
-static inline long bp_as_native(BufPtr bp) {
-    wasm_exec_env_t exec_env = bp.env;
-    return (bp.ctx == WasmPtr) ? (long) addr_wasm2native(exec_env, bp.val) : bp.val;
-}
-static inline WasmMemAddr bp_as_wasm(BufPtr bp) {
-    return (bp.ctx == WasmPtr) ? bp.val : addr_native2wasm(bp.env, (void*) bp.val);
-}
+BufPtr wasm_bp(wasm_exec_env_t exec_env, WasmMemAddr bp);
+BufPtr native_bp(wasm_exec_env_t exec_env, Addr bp);
+long bp_as_native(BufPtr bp);
+WasmMemAddr bp_as_wasm(BufPtr bp);
+
 
 /* Shared syscall implementations — called by the corresponding
  * `wali_syscall_X` wrapper as well as any aliases that delegate to it. */

@@ -38,49 +38,6 @@
 #include "exports.h"
 #include "../interpreter/sigtable.h"
 
-/** Memory Copy Macros **/
-#define WR_FIELD(wptr, val, ty)         \
-    ({                                  \
-        memcpy(wptr, &val, sizeof(ty)); \
-        wptr += sizeof(ty);             \
-    })
-
-#define WR_FIELD_ADDR(wptr, nptr)              \
-    ({                                         \
-        uint32_t wasm_addr = addr_native2wasm(exec_env, nptr);      \
-        if (!wasm_addr) {                      \
-            VERB("NULL Wasm Address generated"); \
-        }                                      \
-        WR_FIELD(wptr, wasm_addr, uint32_t);   \
-    })
-
-#define WR_FIELD_ARRAY(wptr, narr, ty, num)   \
-    ({                                        \
-        memcpy(wptr, narr, sizeof(ty) * num); \
-        wptr += (sizeof(ty) * num);           \
-    })
-
-#define RD_FIELD(ptr, ty)              \
-    ({                                 \
-        ty val;                        \
-        memcpy(&val, ptr, sizeof(ty)); \
-        ptr += sizeof(ty);             \
-        val;                           \
-    })
-
-#define RD_FIELD_ADDR(ptr)                        \
-    ({                                            \
-        uint32_t field = RD_FIELD(ptr, uint32_t); \
-        addr_wasm2native(exec_env, field);                             \
-    })
-
-#define RD_FIELD_ARRAY(dest, ptr, ty, num)    \
-    ({                                        \
-        memcpy(&dest, ptr, sizeof(ty) * num); \
-        ptr += (sizeof(ty) * num);            \
-    })
-/** **/
-
 // ASM restorer function '__libc_restore_rt'.
 extern void
 __libc_restore_rt();
@@ -92,7 +49,6 @@ struct k_sigaction {
     void (*restorer)(void);
     unsigned mask[2];
 };
-
 
 /* Copy pselect6 sigmask structure */
 void *

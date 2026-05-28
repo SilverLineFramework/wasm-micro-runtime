@@ -34,7 +34,7 @@
 
 /** Memory defines/translations **/
 // A pointer to host (native) memory
-typedef uint8_t *Addr;
+typedef void* Addr;
 // A pointer to a Wasm linear memory address
 typedef uint32_t WasmMemAddr;
 // A pointer to a Wasm function (index into table)

@@ -38,6 +38,21 @@
 #include "syscall.h"
 #include "impl.h"
 
+// BufPtr methods
+BufPtr wasm_bp(wasm_exec_env_t exec_env, WasmMemAddr bp) {
+    return (BufPtr) { .val = { .wasm_ptr = bp }, .ctx = WasmPtr, .env = exec_env };
+}
+BufPtr native_bp(wasm_exec_env_t exec_env, Addr bp) {
+    return (BufPtr) { .val = { .ptr = bp }, .ctx = NativePtr, .env = exec_env };
+}
+long bp_as_native(BufPtr bp) {
+    return (long) ((bp.ctx == WasmPtr) ? addr_wasm2native(bp.env, bp.val.wasm_ptr) : bp.val.ptr);
+}
+WasmMemAddr bp_as_wasm(BufPtr bp) {
+    return (bp.ctx == WasmPtr) ? bp.val.wasm_ptr : addr_native2wasm(bp.env, bp.val.ptr);
+}
+
+
 long newfstatat_impl(wasm_exec_env_t exec_env, int32_t dirfd, BufPtr pathname, WasmMemAddr statbuf, int32_t flags) {
 #if __x86_64__
     return __syscall4(SYS_newfstatat, dirfd, bp_as_native(pathname), addr_wasm2native(exec_env, statbuf), flags);

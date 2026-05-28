@@ -32,16 +32,97 @@
 
 #include "copy.h"
 
+typedef struct {
+    wasm_exec_env_t env;
+    // A native pointer to a native object
+    Addr ptr;
+    // A native pointer to a Wasm object
+    Addr wasm_ptr;
+} CopyCtx;
+
+CopyCtx ctx(wasm_exec_env_t env, Addr ptr, WasmMemAddr wasm_ptr, size_t target_size) {
+    return (CopyCtx) { .env = env, .ptr = ptr, 
+        .wasm_ptr = addr_wasm2native(env, wasm_ptr) };
+}
+
+
+// A wasm-to-native memory copy when the fields being copied match up
+void cp_w2n(CopyCtx *ctx, size_t field_size) {
+
+}
+
+// A wasm-to-native memory copy for fields with different sizes 
+void cp_w2n_sext(CopyCtx *ctx, size_t wasm_field_size, size_t native_field_size) {
+}
+
+// A wasm-to-native memory copy specialized for pointer/address fields
+void cp_w2n_ptr(CopyCtx *ctx) {
+}
+
+// A native-to-wasm memory copy
+void cp_n2w(CopyCtx *ctx, size_t field_size) {
+
+}
+
+// A native-to-wasm memory copy specialized for pointer/address fields
+void cp_n2w_ptr(CopyCtx *ctx) {
+}
+
+
+/** Memory Copy Macros **/
+#define WR_FIELD(wptr, val, ty)         \
+    ({                                  \
+        memcpy(wptr, &val, sizeof(ty)); \
+        wptr += sizeof(ty);             \
+    })
+
+#define WR_FIELD_ADDR(wptr, nptr)              \
+    ({                                         \
+        uint32_t wasm_addr = addr_native2wasm(exec_env, nptr);      \
+        if (!wasm_addr) {                      \
+            VERB("NULL Wasm Address generated"); \
+        }                                      \
+        WR_FIELD(wptr, wasm_addr, uint32_t);   \
+    })
+
+#define WR_FIELD_ARRAY(wptr, narr, ty, num)   \
+    ({                                        \
+        memcpy(wptr, narr, sizeof(ty) * num); \
+        wptr += (sizeof(ty) * num);           \
+    })
+
+#define RD_FIELD(ptr, ty)              \
+    ({                                 \
+        ty val;                        \
+        memcpy(&val, ptr, sizeof(ty)); \
+        ptr += sizeof(ty);             \
+        val;                           \
+    })
+
+#define RD_FIELD_ADDR(ptr)                        \
+    ({                                            \
+        uint32_t field = RD_FIELD(ptr, uint32_t); \
+        addr_wasm2native(exec_env, field);                             \
+    })
+
+#define RD_FIELD_ARRAY(dest, ptr, ty, num)    \
+    ({                                        \
+        memcpy(&dest, ptr, sizeof(ty) * num); \
+        ptr += (sizeof(ty) * num);            \
+    })
+/** **/
+
+
 /* Copy pselect6 sigmask structure */
 void *
 copy_pselect6_sigmask(wasm_exec_env_t exec_env, Addr wasm_psel_sm,
                       long *sm_struct)
 {
-    /* Libc stores the address in a long (64-bit). Cannot use RD_FIELD_ADDR
-     * since it reads 32-bit values */
     if (wasm_psel_sm == NULL) {
       return NULL;
     }
+    /* Libc stores the address in a long (64-bit). Cannot use RD_FIELD_ADDR
+     * since it reads 32-bit values */
     long sigmask_addr = RD_FIELD(wasm_psel_sm, long);
     sm_struct[0] = (long)addr_wasm2native(exec_env, sigmask_addr);
     sm_struct[1] = RD_FIELD(wasm_psel_sm, long);
