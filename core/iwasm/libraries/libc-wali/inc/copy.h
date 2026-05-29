@@ -87,9 +87,13 @@ copy_sigstack(stack_t *ss, wasm_exec_env_t exec_env, WasmMemAddr wasm_sigstack);
 void
 copy2wasm_sigstack(wasm_exec_env_t exec_env, WasmMemAddr wasm_ss, stack_t *ss);
 
-/* Copy array of strings (strings are not malloced) */
+// Calculate the number of elements in a null-terminated Wasm array
+// SAFETY: Ensure arr is non-null
+bool arr_len_nullterm(wasm_exec_env_t exec_env, WasmMemAddr arr, uint32_t* len);
+
+/* Copy array of strings (strings are not malloced and are null-terminated) */
 char **
-copy_stringarr(wasm_exec_env_t exec_env, Addr wasm_arr);
+copy_stringarr(char** native_arr, wasm_exec_env_t exec_env, WasmMemAddr arr, uint32_t num_strings);
 
 /** Architecture-specific copies **/
 #if __has_include("copy_arch.h")

@@ -898,7 +898,11 @@ wali_syscall_execve(wasm_exec_env_t exec_env, WasmMemAddr pathname, WasmMemAddr 
 {
     SC(execve);
     VERB("Execve string: %s\n", addr_wasm2native(exec_env, pathname));
-    char **native_argv = copy_stringarr(exec_env, addr_wasm2native(exec_env, argv));
+    uint32_t num_argv = 0;
+    char **native_argv = NULL;
+    if (arr_len_nullterm(exec_env, argv, &num_argv)) {
+        native_argv = copy_stringarr(malloc((num_argv + 1) * sizeof(char*)), exec_env, argv, num_argv);
+    }
     char **argpt = native_argv;
     int i = 0;
     while (*argpt != NULL) {
@@ -906,7 +910,11 @@ wali_syscall_execve(wasm_exec_env_t exec_env, WasmMemAddr pathname, WasmMemAddr 
         argpt++;
         i++;
     }
-    char **native_envp = copy_stringarr(exec_env, addr_wasm2native(exec_env, envp));
+    uint32_t num_envp = 0;
+    char **native_envp = NULL;
+    if (arr_len_nullterm(exec_env, envp, &num_envp)) {
+        native_envp = copy_stringarr(malloc((num_envp + 1) * sizeof(char*)), exec_env, envp, num_envp);
+    }
     /* For child WALI processes: Pass env through temporary file-descriptor that
      * is read on init For child native processes: envp is passed through the
      * syscall invocation */

@@ -51,8 +51,10 @@ CopyCtx ctx(wasm_exec_env_t env, Addr ptr, WasmMemAddr wasm_ptr) {
 }
 
 // A simple Wasm pointer increment when no copying is needed (e.g. for padding/unsupported fields)
-void cp_skip_wasm(CopyCtx *ctx, size_t wasm_field_size) {
+void* cp_skip_wasm(CopyCtx *ctx, size_t wasm_field_size) {
+    void* ret = (void*)ctx->wasm_ptr;
     ctx->wasm_ptr += wasm_field_size;
+    return ret;
 }
 
 // A simple native pointer increment when no copying is needed (e.g. for padding/unsupported fields)
@@ -362,26 +364,30 @@ copy2wasm_sigstack(wasm_exec_env_t exec_env, WasmMemAddr wasm_ss, stack_t *ss)
     assert_cp_size(&cc, sizeof(stack_t), 12);
 }
 
-/* Copy array of strings (strings are not malloced) */
+// Calculate the number of elements in a null-terminated Wasm array.
+// Returns false if arr is null.
+bool arr_len_nullterm(wasm_exec_env_t exec_env, WasmMemAddr arr, uint32_t* len) {
+    if (!arr) {
+        return false;
+    }
+    CopyCtx cc = ctx(exec_env, NULL, arr);
+    *len = 0;
+    while (*(WasmMemAddr*)cp_skip_wasm(&cc, sizeof(WasmMemAddr))) {
+        (*len)++;
+    }
+    return true;
+}
+
+/* Copy array of strings (strings are not malloced, and are null-terminated) */
 char **
-copy_stringarr(wasm_exec_env_t exec_env, Addr wasm_arr)
+copy_stringarr(char** native_arr, wasm_exec_env_t exec_env, WasmMemAddr arr, uint32_t num_strings)
 {
-    if (!wasm_arr) {
-        return NULL;
+    CopyCtx cc = ctx(exec_env, native_arr, arr);
+    for (uint32_t i = 0; i < num_strings; i++) {
+        cp_w2n_ptr(&cc); // copy pointer to string
     }
-    int num_strings = 0;
-    /* Find num elems */
-    Addr arr_it = wasm_arr;
-    char *str;
-    while ((str = (char *)RD_FIELD_ADDR(arr_it))) {
-        num_strings++;
-    }
-    char **stringarr = (char **)malloc((num_strings + 1) * sizeof(char*));
-    for (int i = 0; i < num_strings; i++) {
-        stringarr[i] = (char *)RD_FIELD_ADDR(wasm_arr);
-    }
-    stringarr[num_strings] = NULL;
-    return stringarr;
+    native_arr[num_strings] = NULL;
+    return native_arr;
 }
 
 /** Architecture-specific copies **/
