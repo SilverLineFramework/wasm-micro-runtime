@@ -532,13 +532,9 @@ long
 wali_syscall_readv(wasm_exec_env_t exec_env, int32_t fd, WasmMemAddr iov, int32_t iovcnt)
 {
     SC(readv);
-    Addr wasm_iov = addr_wasm2native(exec_env, iov);
-    int iov_cnt = iovcnt;
-
-    struct iovec *native_iov = copy_iovec(exec_env, wasm_iov, iov_cnt);
+    struct iovec *native_iov = copy_iovec(malloc(iovcnt * sizeof(struct iovec)), exec_env, iov, iovcnt);
     long retval = __syscall3(SYS_readv, fd, native_iov, iovcnt);
     free(native_iov);
-
     RETURN(retval, "readv", 3, fd, iov, iovcnt);
 }
 
@@ -547,10 +543,7 @@ long
 wali_syscall_writev(wasm_exec_env_t exec_env, int32_t fd, WasmMemAddr iov, int32_t iovcnt)
 {
     SC(writev);
-    Addr wasm_iov = addr_wasm2native(exec_env, iov);
-    int iov_cnt = iovcnt;
-
-    struct iovec *native_iov = copy_iovec(exec_env, wasm_iov, iov_cnt);
+    struct iovec *native_iov = copy_iovec(malloc(iovcnt * sizeof(struct iovec)), exec_env, iov, iovcnt);
     long retval = __syscall3(SYS_writev, fd, native_iov, iovcnt);
     free(native_iov);
     RETURN(retval, "writev", 3, fd, iov, iovcnt);

@@ -52,12 +52,11 @@ struct k_sigaction {
 
 /* Copy pselect6 sigmask structure */
 void *
-copy_pselect6_sigmask(wasm_exec_env_t exec_env, Addr wasm_psel_sm,
-                      long *sm_struct);
+copy_pselect6_sigmask(long *sm_struct, wasm_exec_env_t exec_env, WasmMemAddr wasm_psel_sm);
 
 /* Copy iovec structure */
-struct iovec *
-copy_iovec(wasm_exec_env_t exec_env, Addr wasm_iov, int iov_cnt);
+struct iovec*
+copy_iovec(struct iovec *native_iov, wasm_exec_env_t exec_env, WasmMemAddr wasm_iov, int iovcnt);
 
 /* Copy epoll_event structure */
 struct epoll_event *

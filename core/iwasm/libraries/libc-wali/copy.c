@@ -38,11 +38,16 @@ typedef struct {
     Addr ptr;
     // A native pointer to a Wasm object
     Addr wasm_ptr;
+    // Initial values of the above, for validating sizes
+    Addr initial_ptr;
+    Addr initial_wasm_ptr;
 } CopyCtx;
 
-CopyCtx ctx(wasm_exec_env_t env, Addr ptr, WasmMemAddr wasm_ptr, size_t target_size) {
+CopyCtx ctx(wasm_exec_env_t env, Addr ptr, WasmMemAddr wasm_ptr) {
+    Addr wasm_ptr_addr = addr_wasm2native(env, wasm_ptr);
     return (CopyCtx) { .env = env, .ptr = ptr, 
-        .wasm_ptr = addr_wasm2native(env, wasm_ptr) };
+        .wasm_ptr = wasm_ptr_addr, .initial_ptr = ptr, 
+        .initial_wasm_ptr = wasm_ptr_addr };
 }
 
 // A wasm-to-native memory copy when the fields being copied match up
@@ -53,7 +58,7 @@ void cp_w2n(CopyCtx *ctx, size_t field_size) {
 }
 
 // A wasm-to-native memory copy for fields with different sizes, with optional sign-extension
-void cp_w2n_ext(CopyCtx *ctx, size_t wasm_field_size, size_t native_field_size, bool sext) {
+void cp_w2n_ext(CopyCtx *ctx, size_t native_field_size, size_t wasm_field_size, bool sext) {
     size_t common = wasm_field_size < native_field_size ? wasm_field_size : native_field_size;
     memcpy(ctx->ptr, ctx->wasm_ptr, common);
     if (native_field_size > wasm_field_size) {
@@ -75,6 +80,16 @@ void cp_w2n_ptr(CopyCtx *ctx) {
     ctx->ptr += sizeof native;
 }
 
+// A wasm-to-native memory copy for pointer stored in a non-standard field size
+void cp_w2n_ptr_align(CopyCtx *ctx, size_t wasm_field_size) {
+    WasmMemAddr w;
+    memcpy(&w, ctx->wasm_ptr, sizeof w);
+    Addr native = addr_wasm2native(ctx->env, w);
+    memcpy(ctx->ptr, &native, sizeof native);
+    ctx->wasm_ptr += wasm_field_size;
+    ctx->ptr += sizeof native;
+}
+
 // A native-to-wasm memory copy
 void cp_n2w(CopyCtx *ctx, size_t field_size) {
     memcpy(ctx->wasm_ptr, ctx->ptr, field_size);
@@ -90,6 +105,12 @@ void cp_n2w_ptr(CopyCtx *ctx) {
     memcpy(ctx->wasm_ptr, &w, sizeof w);
     ctx->ptr += sizeof native;
     ctx->wasm_ptr += sizeof w;
+}
+
+
+inline void assert_cp_size(CopyCtx *ctx, size_t target_native_size, size_t target_wasm_size) {
+    assert(ctx->ptr - ctx->initial_ptr == target_native_size);
+    assert(ctx->wasm_ptr - ctx->initial_wasm_ptr == target_wasm_size);
 }
 
 
@@ -139,34 +160,34 @@ void cp_n2w_ptr(CopyCtx *ctx) {
 
 /* Copy pselect6 sigmask structure */
 void *
-copy_pselect6_sigmask(wasm_exec_env_t exec_env, Addr wasm_psel_sm,
-                      long *sm_struct)
+copy_pselect6_sigmask(long *sm_struct, wasm_exec_env_t exec_env, WasmMemAddr wasm_psel_sm)
 {
-    if (wasm_psel_sm == NULL) {
+    CopyCtx cc = ctx(exec_env, sm_struct, wasm_psel_sm);
+    if (cc.wasm_ptr == NULL) {
       return NULL;
     }
-    /* Libc stores the address in a long (64-bit). Cannot use RD_FIELD_ADDR
-     * since it reads 32-bit values */
-    long sigmask_addr = RD_FIELD(wasm_psel_sm, long);
-    sm_struct[0] = (long)addr_wasm2native(exec_env, sigmask_addr);
-    sm_struct[1] = RD_FIELD(wasm_psel_sm, long);
+    // The sigmask uses 64-bit aligned pointer
+    cp_w2n_ptr_align(&cc, sizeof(uintptr_t));
+    cp_w2n(&cc, sizeof(long));
+    assert_cp_size(&cc, 16, 16);
     return sm_struct;
 }
 
 /* Copy iovec structure */
-struct iovec *
-copy_iovec(wasm_exec_env_t exec_env, Addr wasm_iov, int iov_cnt)
+struct iovec*
+copy_iovec(struct iovec *native_iov, wasm_exec_env_t exec_env, WasmMemAddr wasm_iov, int iovcnt)
 {
-    if (wasm_iov == NULL) {
+    CopyCtx cc = ctx(exec_env, native_iov, wasm_iov);
+    if (cc.wasm_ptr == NULL) {
         return NULL;
     }
-    struct iovec *new_iov =
-        (struct iovec *)malloc(iov_cnt * sizeof(struct iovec));
-    for (int i = 0; i < iov_cnt; i++) {
-        new_iov[i].iov_base = RD_FIELD_ADDR(wasm_iov);
-        new_iov[i].iov_len = RD_FIELD(wasm_iov, int32_t);
+    for (int i = 0; i < iovcnt; i++) {
+        // iov_base, iov_len
+        cp_w2n_ptr(&cc);
+        cp_w2n_ext(&cc, sizeof(size_t), sizeof(uint32_t), false);
     }
-    return new_iov;
+    assert_cp_size(&cc, sizeof(struct iovec) * iovcnt, 8 * iovcnt);
+    return native_iov;
 }
 
 /* Copy epoll_event structure */
@@ -205,7 +226,8 @@ copy_msghdr(wasm_exec_env_t exec_env, Addr wasm_msghdr)
     msg->msg_name = RD_FIELD_ADDR(wasm_msghdr);
     msg->msg_namelen = RD_FIELD(wasm_msghdr, unsigned);
 
-    Addr wasm_iov = RD_FIELD_ADDR(wasm_msghdr);
+    // Just changed this with iov
+    WasmMemAddr wasm_iov = RD_FIELD(wasm_msghdr, uint32_t);
     msg->msg_iovlen = RD_FIELD(wasm_msghdr, int);
 
     RD_FIELD(wasm_msghdr, int); // pad1
@@ -216,7 +238,7 @@ copy_msghdr(wasm_exec_env_t exec_env, Addr wasm_msghdr)
     RD_FIELD(wasm_msghdr, int); // pad2
     msg->msg_flags = RD_FIELD(wasm_msghdr, int);
 
-    msg->msg_iov = copy_iovec(exec_env, wasm_iov, msg->msg_iovlen);
+    msg->msg_iov = copy_iovec(malloc(msg->msg_iovlen * sizeof(struct iovec)), exec_env, wasm_iov, msg->msg_iovlen);
     return msg;
 }
 
