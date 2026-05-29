@@ -50,7 +50,7 @@ jobs:
 
       - name: Build iwasm (from current wasm-micro-runtime)
         working-directory: wali
-        run: make iwasm
+        run: make iwasm MODE=Debug
 
       - name: Build native test binaries
         working-directory: wali
