@@ -60,16 +60,14 @@ copy_iovec(struct iovec *native_iov, wasm_exec_env_t exec_env, WasmMemAddr wasm_
 
 /* Copy epoll_event structure */
 struct epoll_event *
-copy_epoll_event(wasm_exec_env_t exec_env, Addr wasm_epoll,
-                 struct epoll_event *n_epoll);
+copy_epoll_event(struct epoll_event *native_epoll, wasm_exec_env_t exec_env, WasmMemAddr wasm_epoll);
 
 void
-copy2wasm_epoll_event(wasm_exec_env_t exec_env, Addr wasm_epoll,
-                      struct epoll_event *n_epoll);
+copy2wasm_epoll_event(wasm_exec_env_t exec_env, WasmMemAddr wasm_epoll, struct epoll_event *native_epoll);
 
 /* Copy msghdr structure */
 struct msghdr *
-copy_msghdr(wasm_exec_env_t exec_env, Addr wasm_msghdr);
+copy_msghdr(struct msghdr *msg, wasm_exec_env_t exec_env, WasmMemAddr wasm_msghdr);
 
 /* Copy sigaction back to WASM */
 void

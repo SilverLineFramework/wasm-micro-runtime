@@ -136,8 +136,7 @@ long faccessat_impl(wasm_exec_env_t exec_env, int32_t dirfd, WasmMemAddr pathnam
 long pselect6_impl(wasm_exec_env_t exec_env, int32_t nfds, WasmMemAddr readfds, WasmMemAddr writefds, WasmMemAddr exceptfds, WasmMemAddr timeout, WasmMemAddr sigmask) {
     VERB("pselect args | nfds: %ld, readfds: %ld, writefds: %ld, exceptfds: %ld, timeout: %ld, sigmask: %ld",
        nfds, readfds, writefds, exceptfds, timeout, sigmask);
-    long sm_struct[2];
-    long *sm_struct_ptr = copy_pselect6_sigmask(sm_struct, exec_env, sigmask);
+    long *sm_struct_ptr = copy_pselect6_sigmask((long[]){0, 0}, exec_env, sigmask);
     return __syscall6(SYS_pselect6, nfds, addr_wasm2native(exec_env, readfds), addr_wasm2native(exec_env, writefds), addr_wasm2native(exec_env, exceptfds),
                       addr_wasm2native(exec_env, timeout), sm_struct_ptr);
 }

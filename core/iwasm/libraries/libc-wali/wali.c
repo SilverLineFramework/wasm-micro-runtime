@@ -783,8 +783,7 @@ long
 wali_syscall_sendmsg(wasm_exec_env_t exec_env, int32_t sockfd, WasmMemAddr msg, int32_t flags)
 {
     SC(sendmsg);
-    Addr wasm_msghdr = addr_wasm2native(exec_env, msg);
-    struct msghdr *native_msghdr = copy_msghdr(exec_env, wasm_msghdr);
+    struct msghdr *native_msghdr = copy_msghdr(malloc(sizeof(struct msghdr)), exec_env, msg);
     long retval = __syscall3(SYS_sendmsg, sockfd, native_msghdr, flags);
     free(native_msghdr);
     RETURN(retval, "sendmsg", 3, sockfd, msg, flags);
@@ -795,8 +794,7 @@ long
 wali_syscall_recvmsg(wasm_exec_env_t exec_env, int32_t sockfd, WasmMemAddr msg, int32_t flags)
 {
     SC(recvmsg);
-    Addr wasm_msghdr = addr_wasm2native(exec_env, msg);
-    struct msghdr *native_msghdr = copy_msghdr(exec_env, wasm_msghdr);
+    struct msghdr *native_msghdr = copy_msghdr(malloc(sizeof(struct msghdr)), exec_env, msg);
     long retval = __syscall3(SYS_recvmsg, sockfd, native_msghdr, flags);
     free(native_msghdr);
     RETURN(retval, "recvmsg", 3, sockfd, msg, flags);
@@ -1531,8 +1529,7 @@ long
 wali_syscall_epoll_ctl(wasm_exec_env_t exec_env, int32_t epfd, int32_t op, int32_t fd, WasmMemAddr event)
 {
     SC(epoll_ctl);
-    struct epoll_event *nev =
-        copy_epoll_event(exec_env, addr_wasm2native(exec_env, event), &(struct epoll_event){ 0 });
+    struct epoll_event *nev = copy_epoll_event(&(struct epoll_event){ 0 }, exec_env, event);
     RETURN(__syscall4(SYS_epoll_ctl, epfd, op, fd, nev), "epoll_ctl", 4, epfd, op,
            fd, event);
 }
@@ -1656,11 +1653,9 @@ long
 wali_syscall_epoll_pwait(wasm_exec_env_t exec_env, int32_t epfd, WasmMemAddr events, int32_t maxevents, int32_t timeout, WasmMemAddr sigmask, uint32_t sigsetsize)
 {
     SC(epoll_pwait);
-    Addr wasm_epoll = addr_wasm2native(exec_env, events);
-    struct epoll_event *nev =
-        copy_epoll_event(exec_env, wasm_epoll, &(struct epoll_event){ 0 });
+    struct epoll_event *nev = copy_epoll_event(&(struct epoll_event){ 0 }, exec_env, events);
     long retval = __syscall6(SYS_epoll_pwait, epfd, nev, maxevents, timeout, addr_wasm2native(exec_env, sigmask), sigsetsize);
-    copy2wasm_epoll_event(exec_env, wasm_epoll, nev);
+    copy2wasm_epoll_event(exec_env, events, nev);
     RETURN(retval, "epoll_pwait", 6, epfd, events, maxevents, timeout, sigmask, sigsetsize);
 }
 
