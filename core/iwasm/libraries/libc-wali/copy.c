@@ -62,6 +62,12 @@ void cp_skip_native(CopyCtx *ctx, size_t native_field_size) {
     ctx->ptr += native_field_size;
 }
 
+// A skip over a function pointer field, returning the original Wasm function index (for storing in WALI tables)
+WasmFuncPtr* cp_skip_funcptr(CopyCtx *ctx) {
+    cp_skip_native(ctx, sizeof(void(*)(void)));
+    return (WasmFuncPtr*) cp_skip_wasm(ctx, sizeof(WasmFuncPtr));
+}
+
 void assert_cp_size(CopyCtx *ctx, size_t target_native_size, size_t target_wasm_size) {
     assert((size_t)(ctx->ptr - ctx->initial_ptr) == target_native_size);
     assert((size_t)(ctx->wasm_ptr - ctx->initial_wasm_ptr) == target_wasm_size);
@@ -190,7 +196,7 @@ copy_pselect6_sigmask(long *sm_struct, wasm_exec_env_t exec_env, WasmMemAddr was
       return NULL;
     }
     // The sigmask uses 64-bit aligned pointer
-    cp_w2n_ptr_align(&cc, sizeof(uintptr_t));
+    cp_w2n_ptr_align(&cc, 8);
     cp_w2n(&cc, sizeof(long));
     assert_cp_size(&cc, 16, 16);
     return sm_struct;
@@ -243,6 +249,7 @@ copy2wasm_epoll_event(wasm_exec_env_t exec_env, WasmMemAddr wasm_epoll, struct e
     cp_n2w_ext(&cc, sizeof(uint32_t), sizeof(uint64_t)); // events
 #endif
     cp_n2w(&cc, sizeof(uint64_t)); // data
+    assert_cp_size(&cc, sizeof(struct epoll_event), 12);
     return;
 }
 
@@ -272,67 +279,78 @@ copy_msghdr(struct msghdr *msg, wasm_exec_env_t exec_env, WasmMemAddr wasm_msghd
     return msg;
 }
 
-/* Copy sigaction back to WASM */
+/* Copy sigaction back to Wasm */
 void
-copy2wasm_old_ksigaction(int signo, Addr wasm_act, struct k_sigaction *act)
+copy2wasm_old_ksigaction(wasm_exec_env_t exec_env, WasmMemAddr wasm_act, struct k_sigaction *native_act, int signo)
 {
+    if (native_act == NULL) {
+        return;
+    }
+
     WasmFuncPtr old_wasm_funcptr;
-    if (act->handler == SIG_DFL) {
-        old_wasm_funcptr = WASM_SIG_DFL;
+    switch ((uintptr_t)native_act->handler) {
+        case (uintptr_t) SIG_DFL: old_wasm_funcptr = WASM_SIG_DFL; break;
+        case (uintptr_t) SIG_IGN: old_wasm_funcptr = WASM_SIG_IGN; break;
+        case (uintptr_t) SIG_ERR: old_wasm_funcptr = WASM_SIG_ERR; break;
+        default:
+            old_wasm_funcptr = wali_sigtable[signo].func_table_idx;
+            VERB("Save old sigaction handler -- Tbl[%d]", old_wasm_funcptr);
     }
-    else if (act->handler == SIG_IGN) {
-        old_wasm_funcptr = WASM_SIG_IGN;
-    }
-    else if (act->handler == SIG_ERR) {
-        old_wasm_funcptr = WASM_SIG_ERR;
-    }
-    else {
-        old_wasm_funcptr = wali_sigtable[signo].func_table_idx;
-        VERB("Save old sigaction handler -- Tbl[%d]", old_wasm_funcptr);
-    }
-    WR_FIELD(wasm_act, old_wasm_funcptr, WasmFuncPtr);
-    WR_FIELD(wasm_act, act->flags, unsigned long);
-    WR_FIELD(wasm_act, act->restorer, WasmFuncPtr);
-    WR_FIELD_ARRAY(wasm_act, act->mask, unsigned, 2);
+    
+    CopyCtx cc = ctx(exec_env, native_act, wasm_act);
+    // handler (use the one computed)
+    *(cp_skip_funcptr(&cc)) = old_wasm_funcptr;
+
+    cp_n2w(&cc, sizeof(unsigned long)); // flags
+    cp_n2w_ext(&cc, sizeof(WasmFuncPtr), sizeof(void(*)(void))); // restorer
+    cp_n2w(&cc, sizeof(unsigned[2])); // mask
+
+    assert_cp_size(&cc, sizeof(struct k_sigaction), 24);
 }
 
 /* Copy sigaction to native: Function pointers are padded */
 struct k_sigaction *
-copy_ksigaction(wasm_exec_env_t exec_env, Addr wasm_act,
-                struct k_sigaction *act, void (*common_handler)(int),
+copy_ksigaction(struct k_sigaction *native_act, wasm_exec_env_t exec_env, 
+                WasmMemAddr wasm_act, void (*common_handler)(int),
                 WasmFuncPtr *target_wasm_funcptr, char *debug_str)
 {
-    if (wasm_act == NULL) {
+    CopyCtx cc = ctx(exec_env, native_act, wasm_act);
+    if (cc.wasm_ptr == NULL) {
         return NULL;
     }
 
-    WasmFuncPtr wasm_handler_funcptr = RD_FIELD(wasm_act, WasmFuncPtr);
-    if (wasm_handler_funcptr == (WasmFuncPtr)(WASM_SIG_DFL)) {
-        act->handler = SIG_DFL;
-        strcpy(debug_str, "SIG_DFL");
-    }
-    else if (wasm_handler_funcptr == (WasmFuncPtr)(WASM_SIG_IGN)) {
-        act->handler = SIG_IGN;
-        strcpy(debug_str, "SIG_IGN");
-    }
-    else if (wasm_handler_funcptr == (WasmFuncPtr)(WASM_SIG_ERR)) {
-        act->handler = SIG_ERR;
-        strcpy(debug_str, "SIG_ERR");
-    }
-    else {
-        /* Setup common handler */
-        act->handler = common_handler;
-        *target_wasm_funcptr = wasm_handler_funcptr;
-        strcpy(debug_str, "Wasm SIG");
+    WasmFuncPtr wasm_handler_funcptr = *cp_skip_funcptr(&cc);
+
+    cp_w2n(&cc, sizeof(unsigned long)); // flags
+    // Restorer: Skip and use wali virtualized one
+    cp_skip_wasm(&cc, sizeof(WasmFuncPtr));
+    cp_skip_native(&cc, sizeof(void*));
+    native_act->restorer = __libc_restore_rt;
+    cp_w2n(&cc, sizeof(unsigned[2])); // mask
+
+    // Setup appropriate handler based on value
+    switch (wasm_handler_funcptr) {
+        case WASM_SIG_DFL:
+            native_act->handler = SIG_DFL;
+            strcpy(debug_str, "SIG_DFL");
+            break;
+        case WASM_SIG_IGN:
+            native_act->handler = SIG_IGN;
+            strcpy(debug_str, "SIG_IGN");
+            break;
+        case WASM_SIG_ERR:
+            native_act->handler = SIG_ERR;
+            strcpy(debug_str, "SIG_ERR");
+            break;
+        default:
+            /* Setup common handler */
+            native_act->handler = common_handler;
+            *target_wasm_funcptr = wasm_handler_funcptr;
+            strcpy(debug_str, "Wasm SIG");
     }
 
-    act->flags = RD_FIELD(wasm_act, unsigned long);
-
-    RD_FIELD(wasm_act, WasmFuncPtr);
-    act->restorer = __libc_restore_rt;
-
-    RD_FIELD_ARRAY(act->mask, wasm_act, unsigned, 2);
-    return act;
+    assert_cp_size(&cc, sizeof(struct k_sigaction), 24);
+    return native_act;
 }
 
 /* Copy sigstack structure */
@@ -383,9 +401,13 @@ char **
 copy_stringarr(char** native_arr, wasm_exec_env_t exec_env, WasmMemAddr arr, uint32_t num_strings)
 {
     CopyCtx cc = ctx(exec_env, native_arr, arr);
+    if (cc.wasm_ptr == NULL) {
+        return NULL;
+    }
     for (uint32_t i = 0; i < num_strings; i++) {
         cp_w2n_ptr(&cc); // copy pointer to string
     }
+    assert_cp_size(&cc, sizeof(char*) * num_strings, sizeof(WasmMemAddr) * num_strings);
     native_arr[num_strings] = NULL;
     return native_arr;
 }

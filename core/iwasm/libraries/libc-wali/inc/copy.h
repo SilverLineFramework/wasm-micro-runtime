@@ -69,14 +69,14 @@ copy2wasm_epoll_event(wasm_exec_env_t exec_env, WasmMemAddr wasm_epoll, struct e
 struct msghdr *
 copy_msghdr(struct msghdr *msg, wasm_exec_env_t exec_env, WasmMemAddr wasm_msghdr);
 
-/* Copy sigaction back to WASM */
+/* Copy sigaction back to Wasm */
 void
-copy2wasm_old_ksigaction(int signo, Addr wasm_act, struct k_sigaction *act);
+copy2wasm_old_ksigaction(wasm_exec_env_t exec_env, WasmMemAddr wasm_act, struct k_sigaction *native_act, int signo);
 
 /* Copy sigaction to native: Function pointers are padded */
 struct k_sigaction *
-copy_ksigaction(wasm_exec_env_t exec_env, Addr wasm_act,
-                struct k_sigaction *act, void (*common_handler)(int),
+copy_ksigaction(struct k_sigaction *native_act, wasm_exec_env_t exec_env, 
+                WasmMemAddr wasm_act, void (*common_handler)(int),
                 WasmFuncPtr *target_wasm_funcptr, char *debug_str);
 
 /* Copy sigstack structure */

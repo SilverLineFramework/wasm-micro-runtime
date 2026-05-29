@@ -425,10 +425,6 @@ wali_syscall_rt_sigaction(wasm_exec_env_t exec_env, int32_t signum, WasmMemAddr 
        sigsetsize);
     wasm_module_inst_t module_inst = get_module_inst(exec_env);
     int signo = signum;
-    Addr wasm_act = addr_wasm2native(exec_env, act);
-    Addr wasm_oldact = addr_wasm2native(exec_env, oldact);
-    struct k_sigaction native_act = { 0 };
-    struct k_sigaction native_oldact = { 0 };
 
     /* Block signal manipulation while setting up synchronized wali table */
     pthread_mutex_lock(&sigtable_mut);
@@ -436,11 +432,10 @@ wali_syscall_rt_sigaction(wasm_exec_env_t exec_env, int32_t signum, WasmMemAddr 
     char sigtype[30];
 
     /* Prepare for native signal syscall */
-    struct k_sigaction *act_pt =
-        copy_ksigaction(exec_env, wasm_act, &native_act, sa_handler_wali,
-                        &target_wasm_funcptr, sigtype);
-    struct k_sigaction *oldact_pt = wasm_oldact ? &native_oldact : NULL;
-    long retval = __syscall4(SYS_rt_sigaction, signum, act_pt, oldact_pt, sigsetsize);
+    struct k_sigaction *native_act = copy_ksigaction(&(struct k_sigaction){0}, exec_env, 
+            act, sa_handler_wali, &target_wasm_funcptr, sigtype);
+    struct k_sigaction *native_oldact = oldact ? &(struct k_sigaction){0} : NULL;
+    long retval = __syscall4(SYS_rt_sigaction, signum, native_act, native_oldact, sigsetsize);
 
     VERB("Signal Registration -- \'%s\'(%d) | Sigtype: %s", strsignal(signum), signo,
        sigtype);
@@ -457,12 +452,12 @@ wali_syscall_rt_sigaction(wasm_exec_env_t exec_env, int32_t signum, WasmMemAddr 
      * */
     if (!retval && (signo < NSIG)) {
         /* Save old sigaction to WASM */
-        if (oldact_pt) {
-            copy2wasm_old_ksigaction(signo, wasm_oldact, oldact_pt);
+        if (native_oldact) {
+            copy2wasm_old_ksigaction(exec_env, oldact, native_oldact, signo);
         }
         /* Set WALI table */
-        if (act_pt && (act_pt->handler != SIG_DFL)
-            && (act_pt->handler != SIG_IGN) && (act_pt->handler != SIG_ERR)) {
+        if (native_act && (native_act->handler != SIG_DFL)
+            && (native_act->handler != SIG_IGN) && (native_act->handler != SIG_ERR)) {
             wasm_function_inst_t target_wasm_handler =
                 wasm_runtime_get_indirect_function(module_inst, 0,
                                                    target_wasm_funcptr);
