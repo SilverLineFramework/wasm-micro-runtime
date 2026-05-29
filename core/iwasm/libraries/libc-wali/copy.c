@@ -263,8 +263,7 @@ copy_msghdr(struct msghdr *msg, wasm_exec_env_t exec_env, WasmMemAddr wasm_msghd
     cp_w2n_ptr(&cc); // msg_control
     cp_w2n_ext(&cc, sizeof(size_t), sizeof(unsigned), false); // msg_controllen (8-byte align)    
     cp_skip_wasm(&cc, sizeof(int)); // pad2
-    cp_w2n(&cc, sizeof(int)); // msg_flags
-    cp_skip_native(&cc, 4); // Trailing 4-byte padding for 8-byte alignment in native
+    cp_w2n_ext(&cc, sizeof(uint64_t), sizeof(int), false); // msg_flags (trailing 4-byte padding in native)
 
     msg->msg_iov = copy_iovec(malloc(msg->msg_iovlen * sizeof(struct iovec)), exec_env, iov, msg->msg_iovlen);
     assert_cp_size(&cc, sizeof(struct msghdr), 36);
@@ -336,27 +335,31 @@ copy_ksigaction(wasm_exec_env_t exec_env, Addr wasm_act,
 
 /* Copy sigstack structure */
 stack_t *
-copy_sigstack(wasm_exec_env_t exec_env, Addr wasm_sigstack, stack_t *ss)
+copy_sigstack(stack_t *ss, wasm_exec_env_t exec_env, WasmMemAddr wasm_sigstack)
 {
-    if (!wasm_sigstack) {
+    CopyCtx cc = ctx(exec_env, ss, wasm_sigstack);
+    if (cc.wasm_ptr == NULL) {
         return NULL;
     }
-    ss->ss_sp = RD_FIELD_ADDR(wasm_sigstack);
-    ss->ss_flags = RD_FIELD(wasm_sigstack, int);
-    ss->ss_size = RD_FIELD(wasm_sigstack, uint32_t);
+    cp_w2n_ptr(&cc); // ss_sp
+    cp_w2n_ext(&cc, sizeof(uint64_t), sizeof(uint32_t), false); // ss_flags (padding in native)
+    cp_w2n_ext(&cc, sizeof(uint64_t), sizeof(uint32_t), false); // ss_size 
+    assert_cp_size(&cc, sizeof(stack_t), 12);
     return ss;
 }
 
 /* Copy native sigstack back to Wasm */
 void
-copy2wasm_sigstack(wasm_exec_env_t exec_env, Addr wasm_sigstack, stack_t *ss)
+copy2wasm_sigstack(wasm_exec_env_t exec_env, WasmMemAddr wasm_ss, stack_t *ss)
 {
-    if (!ss) {
+    if (ss == NULL) {
         return;
     }
-    WR_FIELD_ADDR(wasm_sigstack, ss->ss_sp);
-    WR_FIELD(wasm_sigstack, ss->ss_flags, int);
-    WR_FIELD(wasm_sigstack, ss->ss_size, uint32_t);
+    CopyCtx cc = ctx(exec_env, ss, wasm_ss);
+    cp_n2w_ptr(&cc); // ss_sp
+    cp_n2w_ext(&cc, sizeof(uint32_t), sizeof(uint64_t)); // ss_flags
+    cp_n2w_ext(&cc, sizeof(uint32_t), sizeof(uint64_t)); // ss_size
+    assert_cp_size(&cc, sizeof(stack_t), 12);
 }
 
 /* Copy array of strings (strings are not malloced) */

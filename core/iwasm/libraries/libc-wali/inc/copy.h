@@ -81,11 +81,11 @@ copy_ksigaction(wasm_exec_env_t exec_env, Addr wasm_act,
 
 /* Copy sigstack structure */
 stack_t *
-copy_sigstack(wasm_exec_env_t exec_env, Addr wasm_sigstack, stack_t *ss);
+copy_sigstack(stack_t *ss, wasm_exec_env_t exec_env, WasmMemAddr wasm_sigstack);
 
 /* Copy native sigstack back to Wasm */
 void
-copy2wasm_sigstack(wasm_exec_env_t exec_env, Addr wasm_sigstack, stack_t *ss);
+copy2wasm_sigstack(wasm_exec_env_t exec_env, WasmMemAddr wasm_ss, stack_t *ss);
 
 /* Copy array of strings (strings are not malloced) */
 char **
