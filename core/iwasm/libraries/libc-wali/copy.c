@@ -32,6 +32,7 @@
 
 #include "copy.h"
 
+// Marshaling utility for copying between native and Wasm structures. 
 typedef struct {
     wasm_exec_env_t env;
     // A native pointer to a native object
@@ -142,32 +143,6 @@ void cp_n2w_ptr(CopyCtx *ctx) {
     ctx->ptr += sizeof native;
     ctx->wasm_ptr += sizeof w;
 }
-
-
-/** Memory Copy Macros **/
-#define WR_FIELD(wptr, val, ty)         \
-    ({                                  \
-        memcpy(wptr, &val, sizeof(ty) ); \
-        wptr += sizeof(ty) ;             \
-    })
-
-#define WR_FIELD_ADDR(wptr, nptr)              \
-    ({                                         \
-        uint32_t wasm_addr = addr_native2wasm(exec_env, nptr);      \
-        if (!wasm_addr) {                      \
-            VERB("NULL Wasm Address generated"); \
-        }                                      \
-        WR_FIELD(wptr, wasm_addr, uint32_t);   \
-    })
-
-#define WR_FIELD_ARRAY(wptr, narr, ty, num)   \
-    ({                                        \
-        memcpy(wptr, narr, sizeof(ty) * num); \
-        wptr += (sizeof(ty) * num);           \
-    })
-
-/** **/
-
 
 /* Copy pselect6 sigmask structure */
 void *
