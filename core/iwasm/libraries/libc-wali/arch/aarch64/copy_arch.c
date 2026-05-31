@@ -89,7 +89,7 @@ copy2wasm_stat_struct(wasm_exec_env_t exec_env, WasmMemAddr wasm_stat,
     assert_cp_size(&cc, sizeof(struct stat), 144);
 }
 
-inline int
+static inline int
 swap_bits(int val, int b1pos, int b2pos)
 {
     int b1 = (val >> b1pos) & 1;
@@ -101,7 +101,7 @@ swap_bits(int val, int b1pos, int b2pos)
 
 /* aarch64 swaps O_DIRECTORY <-> O_DIRECT
  *    and O_NOFOLLOW <-> O_LARGEFILE */
-inline int
+int
 swap_open_flags(int open_flags)
 {
     int odirectory_shf = __builtin_ctz(O_DIRECTORY);
