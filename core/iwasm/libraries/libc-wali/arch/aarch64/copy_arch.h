@@ -27,7 +27,7 @@
 
 /* Copy for `struct stat` into correct ABI */
 void
-copy2wasm_stat_struct(wasm_exec_env_t exec_env, Addr wasm_stat, struct stat *n_stat);
+copy2wasm_stat_struct(wasm_exec_env_t exec_env, WasmMemAddr wasm_stat, struct stat *native_stat);
 
 /* Swap open flags to match native ABI */
 int swap_open_flags(int open_flags);

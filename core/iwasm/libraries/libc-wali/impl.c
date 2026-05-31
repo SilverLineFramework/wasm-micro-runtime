@@ -57,10 +57,9 @@ long newfstatat_impl(wasm_exec_env_t exec_env, int32_t dirfd, BufPtr pathname, W
 #if __x86_64__
     return __syscall4(SYS_newfstatat, dirfd, bp_as_native(pathname), addr_wasm2native(exec_env, statbuf), flags);
 #elif __aarch64__ || __riscv64__
-    Addr wasm_stat = addr_wasm2native(exec_env, statbuf);
     struct stat sb;
     long retval = __syscall4(SYS_newfstatat, dirfd, bp_as_native(pathname), &sb, flags);
-    copy2wasm_stat_struct(exec_env, wasm_stat, &sb);
+    copy2wasm_stat_struct(exec_env, statbuf, &sb);
     return retval;
 #endif
 }

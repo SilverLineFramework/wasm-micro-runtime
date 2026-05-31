@@ -58,8 +58,10 @@ void* cp_skip_wasm(CopyCtx *ctx, size_t wasm_field_size) {
 }
 
 // A simple native pointer increment when no copying is needed (e.g. for padding/unsupported fields)
-void cp_skip_native(CopyCtx *ctx, size_t native_field_size) {
+void* cp_skip_native(CopyCtx *ctx, size_t native_field_size) {
+    void* ret = (void*)ctx->ptr;
     ctx->ptr += native_field_size;
+    return ret;
 }
 
 // A skip over a function pointer field, returning the original Wasm function index (for storing in WALI tables)
@@ -142,7 +144,6 @@ void cp_n2w_ptr(CopyCtx *ctx) {
 }
 
 
-
 /** Memory Copy Macros **/
 #define WR_FIELD(wptr, val, ty)         \
     ({                                  \
@@ -165,25 +166,6 @@ void cp_n2w_ptr(CopyCtx *ctx) {
         wptr += (sizeof(ty) * num);           \
     })
 
-#define RD_FIELD(ptr, ty)              \
-    ({                                 \
-        ty val;                        \
-        memcpy(&val, ptr, sizeof(ty)); \
-        ptr += sizeof(ty);             \
-        val;                           \
-    })
-
-#define RD_FIELD_ADDR(ptr)                        \
-    ({                                            \
-        uint32_t field = RD_FIELD(ptr, uint32_t); \
-        addr_wasm2native(exec_env, field);                             \
-    })
-
-#define RD_FIELD_ARRAY(dest, ptr, ty, num)    \
-    ({                                        \
-        memcpy(&dest, ptr, sizeof(ty) * num); \
-        ptr += (sizeof(ty) * num);            \
-    })
 /** **/
 
 
@@ -323,8 +305,7 @@ copy_ksigaction(struct k_sigaction *native_act, wasm_exec_env_t exec_env,
 
     cp_w2n(&cc, sizeof(unsigned long)); // flags
     // Restorer: Skip and use wali virtualized one
-    cp_skip_wasm(&cc, sizeof(WasmFuncPtr));
-    cp_skip_native(&cc, sizeof(void*));
+    cp_skip_funcptr(&cc);
     native_act->restorer = __libc_restore_rt;
     cp_w2n(&cc, sizeof(unsigned[2])); // mask
 
