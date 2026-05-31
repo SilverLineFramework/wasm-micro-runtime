@@ -1,0 +1,400 @@
+/*
+  MIT License
+
+  Copyright (c) [2023] [Arjun Ramesh]
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+*/
+
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "copy.h"
+
+typedef struct {
+    wasm_exec_env_t env;
+    // A native pointer to a native object
+    Addr ptr;
+    // A native pointer to a Wasm object
+    Addr wasm_ptr;
+    // Initial values of the above, for validating sizes
+    Addr initial_ptr;
+    Addr initial_wasm_ptr;
+} CopyCtx;
+
+CopyCtx ctx(wasm_exec_env_t env, Addr ptr, WasmMemAddr wasm_ptr) {
+    Addr wasm_ptr_addr = addr_wasm2native(env, wasm_ptr);
+    return (CopyCtx) { .env = env, .ptr = ptr, 
+        .wasm_ptr = wasm_ptr_addr, .initial_ptr = ptr, 
+        .initial_wasm_ptr = wasm_ptr_addr };
+}
+
+// A simple Wasm pointer increment when no copying is needed (e.g. for padding/unsupported fields)
+void* cp_skip_wasm(CopyCtx *ctx, size_t wasm_field_size) {
+    void* ret = (void*)ctx->wasm_ptr;
+    ctx->wasm_ptr += wasm_field_size;
+    return ret;
+}
+
+// A simple native pointer increment when no copying is needed (e.g. for padding/unsupported fields)
+void* cp_skip_native(CopyCtx *ctx, size_t native_field_size) {
+    void* ret = (void*)ctx->ptr;
+    ctx->ptr += native_field_size;
+    return ret;
+}
+
+// A skip over a function pointer field, returning the original Wasm function index (for storing in WALI tables)
+WasmFuncPtr* cp_skip_funcptr(CopyCtx *ctx) {
+    cp_skip_native(ctx, sizeof(void(*)(void)));
+    return (WasmFuncPtr*) cp_skip_wasm(ctx, sizeof(WasmFuncPtr));
+}
+
+void assert_cp_size(CopyCtx *ctx, size_t target_native_size, size_t target_wasm_size) {
+    assert((size_t)(ctx->ptr - ctx->initial_ptr) == target_native_size);
+    assert((size_t)(ctx->wasm_ptr - ctx->initial_wasm_ptr) == target_wasm_size);
+}
+
+// A wasm-to-native memory copy when the fields being copied match up
+void cp_w2n(CopyCtx *ctx, size_t field_size) {
+    memcpy(ctx->ptr, ctx->wasm_ptr, field_size);
+    ctx->wasm_ptr += field_size;
+    ctx->ptr += field_size;
+}
+
+// A wasm-to-native memory copy for fields with different sizes, with optional sign-extension
+// Returns the original wasm field pointer.
+void* cp_w2n_ext(CopyCtx *ctx, size_t native_field_size, size_t wasm_field_size, bool sext) {
+    assert(native_field_size >= wasm_field_size);
+    size_t common = wasm_field_size;
+    memcpy(ctx->ptr, ctx->wasm_ptr, common);
+    // Sign-extend: on LE, the MSB lives in the highest-address byte we just wrote.
+    uint8_t fill = (sext && (((uint8_t*)ctx->ptr)[common - 1] & 0x80)) ? 0xFF : 0x00;
+    memset(ctx->ptr + common, fill, native_field_size - common);
+    void* ret = ctx->wasm_ptr;
+    ctx->wasm_ptr += wasm_field_size;
+    ctx->ptr += native_field_size;
+    return ret;
+}
+
+// A wasm-to-native memory copy specialized for pointer/address fields
+void cp_w2n_ptr(CopyCtx *ctx) {
+    WasmMemAddr w;
+    memcpy(&w, ctx->wasm_ptr, sizeof w);
+    Addr native = addr_wasm2native(ctx->env, w);
+    memcpy(ctx->ptr, &native, sizeof native);
+    ctx->wasm_ptr += sizeof w;
+    ctx->ptr += sizeof native;
+}
+
+// A wasm-to-native memory copy for pointer stored in a non-standard field size
+void cp_w2n_ptr_align(CopyCtx *ctx, size_t wasm_field_size) {
+    WasmMemAddr w;
+    memcpy(&w, ctx->wasm_ptr, sizeof w);
+    Addr native = addr_wasm2native(ctx->env, w);
+    memcpy(ctx->ptr, &native, sizeof native);
+    ctx->wasm_ptr += wasm_field_size;
+    ctx->ptr += sizeof native;
+}
+
+// A native-to-wasm memory copy for fields with different sizes
+void cp_n2w_ext(CopyCtx *ctx, size_t wasm_field_size, size_t native_field_size) {
+    assert(native_field_size >= wasm_field_size);
+    size_t common = wasm_field_size;
+    memcpy(ctx->wasm_ptr, ctx->ptr, common);
+    ctx->wasm_ptr += wasm_field_size;
+    ctx->ptr += native_field_size;
+}
+
+// A native-to-wasm memory copy
+void cp_n2w(CopyCtx *ctx, size_t field_size) {
+    memcpy(ctx->wasm_ptr, ctx->ptr, field_size);
+    ctx->ptr += field_size;
+    ctx->wasm_ptr += field_size;
+}
+
+// A native-to-wasm memory copy specialized for pointer/address fields
+void cp_n2w_ptr(CopyCtx *ctx) {
+    Addr native;
+    memcpy(&native, ctx->ptr, sizeof native);
+    WasmMemAddr w = addr_native2wasm(ctx->env, native);
+    memcpy(ctx->wasm_ptr, &w, sizeof w);
+    ctx->ptr += sizeof native;
+    ctx->wasm_ptr += sizeof w;
+}
+
+
+/** Memory Copy Macros **/
+#define WR_FIELD(wptr, val, ty)         \
+    ({                                  \
+        memcpy(wptr, &val, sizeof(ty) ); \
+        wptr += sizeof(ty) ;             \
+    })
+
+#define WR_FIELD_ADDR(wptr, nptr)              \
+    ({                                         \
+        uint32_t wasm_addr = addr_native2wasm(exec_env, nptr);      \
+        if (!wasm_addr) {                      \
+            VERB("NULL Wasm Address generated"); \
+        }                                      \
+        WR_FIELD(wptr, wasm_addr, uint32_t);   \
+    })
+
+#define WR_FIELD_ARRAY(wptr, narr, ty, num)   \
+    ({                                        \
+        memcpy(wptr, narr, sizeof(ty) * num); \
+        wptr += (sizeof(ty) * num);           \
+    })
+
+/** **/
+
+
+/* Copy pselect6 sigmask structure */
+void *
+copy_pselect6_sigmask(long *sm_struct, wasm_exec_env_t exec_env, WasmMemAddr wasm_psel_sm)
+{
+    CopyCtx cc = ctx(exec_env, sm_struct, wasm_psel_sm);
+    if (cc.wasm_ptr == NULL) {
+      return NULL;
+    }
+    // The sigmask uses 64-bit aligned pointer
+    cp_w2n_ptr_align(&cc, 8);
+    cp_w2n(&cc, sizeof(long));
+    assert_cp_size(&cc, 16, 16);
+    return sm_struct;
+}
+
+/* Copy iovec structure */
+struct iovec*
+copy_iovec(struct iovec *native_iov, wasm_exec_env_t exec_env, WasmMemAddr wasm_iov, int iovcnt)
+{
+    CopyCtx cc = ctx(exec_env, native_iov, wasm_iov);
+    if (cc.wasm_ptr == NULL) {
+        return NULL;
+    }
+    for (int i = 0; i < iovcnt; i++) {
+        cp_w2n_ptr(&cc); // iov_base
+        cp_w2n_ext(&cc, sizeof(size_t), sizeof(uint32_t), false); // iov_len
+    }
+    assert_cp_size(&cc, sizeof(struct iovec) * iovcnt, 8 * iovcnt);
+    return native_iov;
+}
+
+/* Copy epoll_event structure */
+struct epoll_event *
+copy_epoll_event(struct epoll_event *native_epoll, wasm_exec_env_t exec_env, WasmMemAddr wasm_epoll)
+{
+    CopyCtx cc = ctx(exec_env, native_epoll, wasm_epoll);
+    if (cc.wasm_ptr == NULL) {
+        return NULL;
+    }
+#if __x86_64__
+    cp_w2n(&cc, sizeof(uint32_t)); // events
+#else
+    cp_w2n_ext(&cc, sizeof(uint64_t), sizeof(uint32_t), false); // events
+#endif
+    cp_w2n(&cc, sizeof(uint64_t)); // data
+    assert_cp_size(&cc, sizeof(struct epoll_event), 12);
+    return native_epoll;
+}
+
+void
+copy2wasm_epoll_event(wasm_exec_env_t exec_env, WasmMemAddr wasm_epoll, struct epoll_event *native_epoll)
+{
+    if (native_epoll == NULL) {
+        return;
+    }
+    CopyCtx cc = ctx(exec_env, native_epoll, wasm_epoll);
+#if __x86_64__
+    cp_n2w(&cc, sizeof(uint32_t)); // events
+#else
+    cp_n2w_ext(&cc, sizeof(uint32_t), sizeof(uint64_t)); // events
+#endif
+    cp_n2w(&cc, sizeof(uint64_t)); // data
+    assert_cp_size(&cc, sizeof(struct epoll_event), 12);
+    return;
+}
+
+/* Copy msghdr structure */
+struct msghdr *
+copy_msghdr(struct msghdr *msg, wasm_exec_env_t exec_env, WasmMemAddr wasm_msghdr)
+{
+    CopyCtx cc = ctx(exec_env, msg, wasm_msghdr);
+    if (cc.wasm_ptr == NULL) {
+        return NULL;
+    }
+    cp_w2n_ptr(&cc); // msg_name
+    cp_w2n_ext(&cc, sizeof(uint64_t), sizeof(unsigned), false); // msg_namelen (8-byte align)
+
+    // msg_iov; don't use w2n_ptr since we need to copy
+    WasmMemAddr iov = *((WasmMemAddr*)cp_w2n_ext(&cc, sizeof(void*), sizeof(WasmMemAddr), false)); 
+    cp_w2n_ext(&cc, sizeof(size_t), sizeof(int), false); // msg_iovlen
+    cp_skip_wasm(&cc, sizeof(int)); // pad1
+
+    cp_w2n_ptr(&cc); // msg_control
+    cp_w2n_ext(&cc, sizeof(size_t), sizeof(unsigned), false); // msg_controllen (8-byte align)    
+    cp_skip_wasm(&cc, sizeof(int)); // pad2
+    cp_w2n_ext(&cc, sizeof(uint64_t), sizeof(int), false); // msg_flags (trailing 4-byte padding in native)
+
+    msg->msg_iov = copy_iovec(malloc(msg->msg_iovlen * sizeof(struct iovec)), exec_env, iov, msg->msg_iovlen);
+    assert_cp_size(&cc, sizeof(struct msghdr), 36);
+    return msg;
+}
+
+/* Copy sigaction back to Wasm */
+void
+copy2wasm_old_ksigaction(wasm_exec_env_t exec_env, WasmMemAddr wasm_act, struct k_sigaction *native_act, int signo)
+{
+    if (native_act == NULL) {
+        return;
+    }
+
+    WasmFuncPtr old_wasm_funcptr;
+    switch ((uintptr_t)native_act->handler) {
+        case (uintptr_t) SIG_DFL: old_wasm_funcptr = WASM_SIG_DFL; break;
+        case (uintptr_t) SIG_IGN: old_wasm_funcptr = WASM_SIG_IGN; break;
+        case (uintptr_t) SIG_ERR: old_wasm_funcptr = WASM_SIG_ERR; break;
+        default:
+            old_wasm_funcptr = wali_sigtable[signo].func_table_idx;
+            VERB("Save old sigaction handler -- Tbl[%d]", old_wasm_funcptr);
+    }
+    
+    CopyCtx cc = ctx(exec_env, native_act, wasm_act);
+    // handler (use the one computed)
+    *(cp_skip_funcptr(&cc)) = old_wasm_funcptr;
+
+    cp_n2w(&cc, sizeof(unsigned long)); // flags
+    cp_n2w_ext(&cc, sizeof(WasmFuncPtr), sizeof(void(*)(void))); // restorer
+    cp_n2w(&cc, sizeof(unsigned[2])); // mask
+
+    assert_cp_size(&cc, sizeof(struct k_sigaction), 24);
+}
+
+/* Copy sigaction to native: Function pointers are padded */
+struct k_sigaction *
+copy_ksigaction(struct k_sigaction *native_act, wasm_exec_env_t exec_env, 
+                WasmMemAddr wasm_act, void (*common_handler)(int),
+                WasmFuncPtr *target_wasm_funcptr, char *debug_str)
+{
+    CopyCtx cc = ctx(exec_env, native_act, wasm_act);
+    if (cc.wasm_ptr == NULL) {
+        return NULL;
+    }
+
+    WasmFuncPtr wasm_handler_funcptr = *cp_skip_funcptr(&cc);
+
+    cp_w2n(&cc, sizeof(unsigned long)); // flags
+    // Restorer: Skip and use wali virtualized one
+    cp_skip_funcptr(&cc);
+    native_act->restorer = __libc_restore_rt;
+    cp_w2n(&cc, sizeof(unsigned[2])); // mask
+
+    // Setup appropriate handler based on value
+    switch (wasm_handler_funcptr) {
+        case WASM_SIG_DFL:
+            native_act->handler = SIG_DFL;
+            strcpy(debug_str, "SIG_DFL");
+            break;
+        case WASM_SIG_IGN:
+            native_act->handler = SIG_IGN;
+            strcpy(debug_str, "SIG_IGN");
+            break;
+        case WASM_SIG_ERR:
+            native_act->handler = SIG_ERR;
+            strcpy(debug_str, "SIG_ERR");
+            break;
+        default:
+            /* Setup common handler */
+            native_act->handler = common_handler;
+            *target_wasm_funcptr = wasm_handler_funcptr;
+            strcpy(debug_str, "Wasm SIG");
+    }
+
+    assert_cp_size(&cc, sizeof(struct k_sigaction), 24);
+    return native_act;
+}
+
+/* Copy sigstack structure */
+stack_t *
+copy_sigstack(stack_t *ss, wasm_exec_env_t exec_env, WasmMemAddr wasm_sigstack)
+{
+    CopyCtx cc = ctx(exec_env, ss, wasm_sigstack);
+    if (cc.wasm_ptr == NULL) {
+        return NULL;
+    }
+    cp_w2n_ptr(&cc); // ss_sp
+    cp_w2n_ext(&cc, sizeof(uint64_t), sizeof(uint32_t), false); // ss_flags (padding in native)
+    cp_w2n_ext(&cc, sizeof(uint64_t), sizeof(uint32_t), false); // ss_size 
+    assert_cp_size(&cc, sizeof(stack_t), 12);
+    return ss;
+}
+
+/* Copy native sigstack back to Wasm */
+void
+copy2wasm_sigstack(wasm_exec_env_t exec_env, WasmMemAddr wasm_ss, stack_t *ss)
+{
+    if (ss == NULL) {
+        return;
+    }
+    CopyCtx cc = ctx(exec_env, ss, wasm_ss);
+    cp_n2w_ptr(&cc); // ss_sp
+    cp_n2w_ext(&cc, sizeof(uint32_t), sizeof(uint64_t)); // ss_flags
+    cp_n2w_ext(&cc, sizeof(uint32_t), sizeof(uint64_t)); // ss_size
+    assert_cp_size(&cc, sizeof(stack_t), 12);
+}
+
+// Calculate the number of elements in a null-terminated Wasm array.
+// Returns false if arr is null.
+bool arr_len_nullterm(wasm_exec_env_t exec_env, WasmMemAddr arr, uint32_t* len) {
+    if (!arr) {
+        return false;
+    }
+    CopyCtx cc = ctx(exec_env, NULL, arr);
+    *len = 0;
+    while (*(WasmMemAddr*)cp_skip_wasm(&cc, sizeof(WasmMemAddr))) {
+        (*len)++;
+    }
+    return true;
+}
+
+/* Copy array of strings (strings are not malloced, and are null-terminated) */
+char **
+copy_stringarr(char** native_arr, wasm_exec_env_t exec_env, WasmMemAddr arr, uint32_t num_strings)
+{
+    CopyCtx cc = ctx(exec_env, native_arr, arr);
+    if (cc.wasm_ptr == NULL) {
+        return NULL;
+    }
+    for (uint32_t i = 0; i < num_strings; i++) {
+        cp_w2n_ptr(&cc); // copy pointer to string
+    }
+    assert_cp_size(&cc, sizeof(char*) * num_strings, sizeof(WasmMemAddr) * num_strings);
+    native_arr[num_strings] = NULL;
+    return native_arr;
+}
+
+/** Architecture-specific copies **/
+#if __has_include("copy_arch.c")
+#include "copy_arch.c"
+#endif
+

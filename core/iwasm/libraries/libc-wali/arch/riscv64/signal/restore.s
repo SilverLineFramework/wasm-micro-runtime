@@ -7,3 +7,4 @@ __libc_restore:
 	li a7, 139 # SYS_rt_sigreturn
 	ecall
 
+.section .note.GNU-stack,"",@progbits

@@ -4,5 +4,7 @@
 .type __libc_restore,@function
 __libc_restore_rt:
 __libc_restore:
-	movl $15, %eax
-	syscall
+	mov x8,#139 // SYS_rt_sigreturn
+	svc 0
+
+.section .note.GNU-stack,"",%progbits
