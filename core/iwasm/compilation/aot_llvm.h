@@ -37,6 +37,18 @@
 #include "aot_orc_extra.h"
 #include "aot_comp_option.h"
 
+#if defined(_WIN32) || defined(_WIN32_)
+#include <io.h>
+#define access _access
+/* On windows there is no X_OK flag to check for executablity, only check for
+ * existence */
+#ifdef X_OK
+#undef X_OK
+#endif
+#define X_OK 00
+#define unlink _unlink
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -75,10 +87,12 @@ typedef struct AOTValue {
     struct AOTValue *next;
     struct AOTValue *prev;
     LLVMValueRef value;
+    uint64 const_value; /* valid if is_const is true */
+    uint32 local_idx;
     /* VALUE_TYPE_I32/I64/F32/F64/VOID */
     uint8 type;
     bool is_local;
-    uint32 local_idx;
+    bool is_const;
 } AOTValue;
 
 /**
@@ -195,7 +209,7 @@ typedef struct AOTBlockStack {
 typedef struct AOTCheckedAddr {
     struct AOTCheckedAddr *next;
     uint32 local_idx;
-    uint32 offset;
+    uint64 offset;
     uint32 bytes;
 } AOTCheckedAddr, *AOTCheckedAddrList;
 
@@ -241,6 +255,13 @@ typedef struct AOTFuncContext {
     bool mem_space_unchanged;
     AOTCheckedAddrList checked_addr_list;
 
+    /* The last accessed shared heap info */
+    LLVMValueRef shared_heap_base_addr_adj;
+    LLVMValueRef shared_heap_start_off;
+    LLVMValueRef shared_heap_end_off;
+    /* The start offset of the head of shared heap chain */
+    LLVMValueRef shared_heap_head_start_off;
+
     LLVMBasicBlockRef got_exception_block;
     LLVMBasicBlockRef func_return_block;
     LLVMValueRef exception_id_phi;
@@ -249,6 +270,9 @@ typedef struct AOTFuncContext {
     LLVMValueRef func_type_indexes;
 #if WASM_ENABLE_DEBUG_AOT != 0
     LLVMMetadataRef debug_func;
+#endif
+#if WASM_ENABLE_BRANCH_HINTS != 0
+    struct WASMCompilationHint *function_hints;
 #endif
 
     unsigned int stack_consumption_for_func_call;
@@ -263,6 +287,7 @@ typedef struct AOTLLVMTypes {
     LLVMTypeRef int32_type;
     LLVMTypeRef int64_type;
     LLVMTypeRef intptr_t_type;
+    LLVMTypeRef size_t_type;
     LLVMTypeRef float32_type;
     LLVMTypeRef float64_type;
     LLVMTypeRef void_type;
@@ -374,7 +399,7 @@ typedef struct AOTCompContext {
     char target_arch[16];
     unsigned pointer_size;
 
-    /* Hardware intrinsic compability flags */
+    /* Hardware intrinsic compatibility flags */
     uint64 flags[8];
 
     /* required by JIT */
@@ -392,6 +417,10 @@ typedef struct AOTCompContext {
     /* Bulk memory feature */
     bool enable_bulk_memory;
 
+    /*  Bulk memory opt feature. will be enabled alongside the
+     * enable_bulk_memory */
+    bool enable_bulk_memory_opt;
+
     /* Boundary Check */
     bool enable_bound_check;
 
@@ -408,7 +437,10 @@ typedef struct AOTCompContext {
     bool enable_aux_stack_check;
 
     /* Generate auxiliary stack frame */
-    bool enable_aux_stack_frame;
+    AOTStackFrameType aux_stack_frame_type;
+
+    /* Auxiliary call stack features */
+    AOTCallStackFeatures call_stack_features;
 
     /* Function performance profiling */
     bool enable_perf_profiling;
@@ -425,14 +457,23 @@ typedef struct AOTCompContext {
     /* Reference Types */
     bool enable_ref_types;
 
+    /* Call Indirect Overlong. will be enabled alongside the enable_ref_types */
+    bool enable_call_indirect_overlong;
+
     /* Disable LLVM built-in intrinsics */
     bool disable_llvm_intrinsics;
+
+    /* Disable LLVM jump tables */
+    bool disable_llvm_jump_tables;
 
     /* Disable LLVM link time optimization */
     bool disable_llvm_lto;
 
     /* Enable LLVM PGO (Profile-Guided Optimization) */
     bool enable_llvm_pgo;
+
+    /* Enable extended constant expression */
+    bool enable_extended_const;
 
     /* Treat unknown import function as wasm-c-api import function
        and allow to directly invoke it from AOT/JIT code */
@@ -441,7 +482,7 @@ typedef struct AOTCompContext {
     /* Use profile file collected by LLVM PGO */
     char *use_prof_file;
 
-    /* Enable to use segument register as the base addr
+    /* Enable to use segment register as the base addr
        of linear memory for load/store operations */
     bool enable_segue_i32_load;
     bool enable_segue_i64_load;
@@ -461,6 +502,9 @@ typedef struct AOTCompContext {
 
     /* Enable GC */
     bool enable_gc;
+
+    bool enable_shared_heap;
+    bool enable_shared_chain;
 
     uint32 opt_level;
     uint32 size_level;
@@ -572,14 +616,14 @@ wasm_type_to_llvm_type(const AOTCompContext *comp_ctx,
 
 bool
 aot_checked_addr_list_add(AOTFuncContext *func_ctx, uint32 local_idx,
-                          uint32 offset, uint32 bytes);
+                          uint64 offset, uint32 bytes);
 
 void
 aot_checked_addr_list_del(AOTFuncContext *func_ctx, uint32 local_idx);
 
 bool
 aot_checked_addr_list_find(AOTFuncContext *func_ctx, uint32 local_idx,
-                           uint32 offset, uint32 bytes);
+                           uint64 offset, uint32 bytes);
 
 void
 aot_checked_addr_list_destroy(AOTFuncContext *func_ctx);
@@ -610,12 +654,6 @@ aot_load_const_from_table(AOTCompContext *comp_ctx, LLVMValueRef base,
 
 bool
 aot_check_simd_compatibility(const char *arch_c_str, const char *cpu_c_str);
-
-void
-aot_add_expand_memory_op_pass(LLVMPassManagerRef pass);
-
-void
-aot_add_simple_loop_unswitch_pass(LLVMPassManagerRef pass);
 
 void
 aot_apply_llvm_new_pass_manager(AOTCompContext *comp_ctx, LLVMModuleRef module);

@@ -70,11 +70,11 @@ Create a corresponding concept for every native structured data type includes
 
 #### Enum types
 
-For example, if there is a `enum wams_mutability_enum` in native.
+For example, if there is a `enum wasm_mutability_enum` in native.
 
 ```c
-typedef uint8_t wams_mutability_t;
-enum wams_mutability_enum {
+typedef uint8_t wasm_mutability_t;
+enum wasm_mutability_enum {
   WASM_CONST,
   WASM_VAR
 };
@@ -83,7 +83,7 @@ enum wams_mutability_enum {
 Use `ctypes.int`(or any integer types in ctypes) to represents its value directly.
 
 ```python
-# represents enum wams_mutability_enum
+# represents enum wasm_mutability_enum
 wasm_mutability_t = c_uint8
 
 WASM_CONST = 0
@@ -353,12 +353,12 @@ writable and needs to be copied into a ctype array.
 
 #### variable arguments
 
-A function with _variable arugments_ makes it hard to specify the required
+A function with _variable arguments_ makes it hard to specify the required
 argument types for the function prototype. It leaves us one way to call it
 directly without any arguments type checking.
 
 ```python
-libc.printf(b"Hello, an int %d, a float %f, a string %s\n", c_int(1), c_doulbe(3.14), "World!")
+libc.printf(b"Hello, an int %d, a float %f, a string %s\n", c_int(1), c_double(3.14), "World!")
 ```
 
 #### Use `c_bool` to represent `wasm_mutability_t `
@@ -373,7 +373,7 @@ libc.printf(b"Hello, an int %d, a float %f, a string %s\n", c_int(1), c_doulbe(3
 
 ### bindgen.py
 
-`bindge.py` is a tool to create WAMR python binding automatically. `binding.py`
+`bindgen.py` is a tool to create WAMR python binding automatically. `binding.py`
 is generated. We should avoid modification on it. Additional helpers should go
 to `ffi.py`.
 

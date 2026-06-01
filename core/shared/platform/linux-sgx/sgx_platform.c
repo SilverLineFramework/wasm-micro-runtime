@@ -131,8 +131,9 @@ os_is_handle_valid(os_file_handle *handle)
 /* implemented in posix_file.c */
 #endif
 
-void *
-os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
+static void *
+os_mmap_internal(void *hint, size_t size, int prot, int flags,
+                 os_file_handle file, bool clear)
 {
     int mprot = 0;
     uint64 aligned_size, page_size;
@@ -149,14 +150,20 @@ os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
     page_size = getpagesize();
     aligned_size = (size + page_size - 1) & ~(page_size - 1);
 
-    if (aligned_size >= UINT32_MAX)
+    if (aligned_size >= UINT32_MAX) {
+        os_printf("mmap failed: request size overflow due to paging\n");
         return NULL;
+    }
 
     ret = sgx_alloc_rsrv_mem(aligned_size);
     if (ret == NULL) {
-        os_printf("os_mmap(size=%u, aligned size=%lu, prot=0x%x) failed.", size,
-                  aligned_size, prot);
+        os_printf("os_mmap(size=%u, aligned size=%lu, prot=0x%x) failed.\n",
+                  size, aligned_size, prot);
         return NULL;
+    }
+
+    if (clear) {
+        memset(ret, 0, aligned_size);
     }
 
     if (prot & MMAP_PROT_READ)
@@ -168,13 +175,37 @@ os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
 
     st = sgx_tprotect_rsrv_mem(ret, aligned_size, mprot);
     if (st != SGX_SUCCESS) {
-        os_printf("os_mmap(size=%u, prot=0x%x) failed to set protect.", size,
+        os_printf("os_mmap(size=%u, prot=0x%x) failed to set protect.\n", size,
                   prot);
         sgx_free_rsrv_mem(ret, aligned_size);
         return NULL;
     }
 
     return ret;
+}
+
+void *
+os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
+{
+    return os_mmap_internal(hint, size, prot, flags, file, true);
+}
+
+void *
+os_mremap(void *old_addr, size_t old_size, size_t new_size)
+{
+    void *new_memory =
+        os_mmap_internal(NULL, new_size, MMAP_PROT_WRITE | MMAP_PROT_READ, 0,
+                         os_get_invalid_handle(), false);
+    if (!new_memory) {
+        return NULL;
+    }
+    size_t copy_size = new_size < old_size ? new_size : old_size;
+    memcpy(new_memory, old_addr, copy_size);
+    if (new_size > copy_size) {
+        memset((char *)new_memory + copy_size, 0, new_size - copy_size);
+    }
+    os_munmap(old_addr, old_size);
+    return new_memory;
 }
 
 void
@@ -205,7 +236,8 @@ os_mprotect(void *addr, size_t size, int prot)
         mprot |= SGX_PROT_EXEC;
     st = sgx_tprotect_rsrv_mem(addr, aligned_size, mprot);
     if (st != SGX_SUCCESS)
-        os_printf("os_mprotect(addr=0x%" PRIx64 ", size=%u, prot=0x%x) failed.",
+        os_printf("os_mprotect(addr=0x%" PRIx64
+                  ", size=%u, prot=0x%x) failed.\n",
                   (uintptr_t)addr, size, prot);
 
     return (st == SGX_SUCCESS ? 0 : -1);
@@ -213,8 +245,10 @@ os_mprotect(void *addr, size_t size, int prot)
 
 void
 os_dcache_flush(void)
-{}
+{
+}
 
 void
 os_icache_flush(void *start, size_t len)
-{}
+{
+}

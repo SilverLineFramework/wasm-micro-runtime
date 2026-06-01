@@ -6,7 +6,9 @@
 #include "ems_gc.h"
 #include "ems_gc_internal.h"
 
+#ifndef GB // Some platforms define already, causing build warnings.
 #define GB (1 << 30UL)
+#endif
 
 #define MARK_NODE_OBJ_CNT 256
 
@@ -114,8 +116,8 @@ sweep_instance_heap(gc_heap_t *heap)
         else {
             /* current block is still live */
             if (last) {
-                tot_free += (char *)cur - (char *)last;
-                gci_add_fc(heap, last, (char *)cur - (char *)last);
+                tot_free += (gc_size_t)((char *)cur - (char *)last);
+                gci_add_fc(heap, last, (gc_size_t)((char *)cur - (char *)last));
                 hmu_mark_pinuse(last);
                 last = NULL;
             }
@@ -132,8 +134,8 @@ sweep_instance_heap(gc_heap_t *heap)
     bh_assert(cur == end);
 
     if (last) {
-        tot_free += (char *)cur - (char *)last;
-        gci_add_fc(heap, last, (char *)cur - (char *)last);
+        tot_free += (gc_size_t)((char *)cur - (char *)last);
+        gci_add_fc(heap, last, (gc_size_t)((char *)cur - (char *)last));
         hmu_mark_pinuse(last);
     }
 
@@ -306,8 +308,12 @@ reclaim_instance_heap(gc_heap_t *heap)
         return GC_SUCCESS;
     ret = gct_vm_begin_rootset_enumeration(heap->cluster, heap);
 #endif
-    if (!ret)
+    if (!ret) {
+        if (heap->root_set) {
+            rollback_mark(heap);
+        }
         return GC_ERROR;
+    }
 
 #if BH_ENABLE_GC_VERIFY != 0
     /* no matter whether the enumeration is successful or not, the data
@@ -449,7 +455,9 @@ gci_gc_heap(void *h)
 
     LOG_VERBOSE("#reclaim instance heap %p", heap);
 
-    gct_vm_gc_prepare();
+    /* TODO: get exec_env of current thread when GC multi-threading
+       is enabled, and pass it to runtime */
+    gct_vm_gc_prepare(NULL);
 
     gct_vm_mutex_lock(&heap->lock);
     heap->is_doing_reclaim = 1;
@@ -459,7 +467,9 @@ gci_gc_heap(void *h)
     heap->is_doing_reclaim = 0;
     gct_vm_mutex_unlock(&heap->lock);
 
-    gct_vm_gc_finished();
+    /* TODO: get exec_env of current thread when GC multi-threading
+       is enabled, and pass it to runtime */
+    gct_vm_gc_finished(NULL);
 
     LOG_VERBOSE("#reclaim instance heap %p done", heap);
 

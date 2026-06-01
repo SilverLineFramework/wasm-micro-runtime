@@ -31,7 +31,7 @@ def run_cmd(cmd, cwd):
         shlex.split(cmd), cwd=cwd, check=False, capture_output=True
     )
     if (qry_prc.returncode != 0):
-        print("Run {} failed, return {}".format(cmd), qry_prc.returncode)
+        print("Run {} failed, return {}".format(cmd, qry_prc.returncode))
         return
     print("return code: {}, output:\n{}".format(qry_prc.returncode,
                                                  qry_prc.stdout.decode()))
@@ -121,7 +121,6 @@ def main():
         print("\n================================")
         print("Test address resolving")
         cmd = "./iwasm --allow-resolve=*.com addr_resolve.wasm github.com"
-        cmd = "./multicast_server FF02:113D:6FDD:2C17:A643:FFE2:1BD1:3CD2"
         run_cmd(cmd, args.working_directory)
 
         # wait for a second

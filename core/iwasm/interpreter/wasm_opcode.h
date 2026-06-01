@@ -86,7 +86,7 @@ typedef enum WASMOpcode {
     WASM_OP_I32_STORE8 = 0x3a,   /* i32.store8 */
     WASM_OP_I32_STORE16 = 0x3b,  /* i32.store16 */
     WASM_OP_I64_STORE8 = 0x3c,   /* i64.store8 */
-    WASM_OP_I64_STORE16 = 0x3d,  /* i64.sotre16 */
+    WASM_OP_I64_STORE16 = 0x3d,  /* i64.store16 */
     WASM_OP_I64_STORE32 = 0x3e,  /* i64.store32 */
     WASM_OP_MEMORY_SIZE = 0x3f,  /* memory.size */
     WASM_OP_MEMORY_GROW = 0x40,  /* memory.grow */
@@ -278,6 +278,15 @@ typedef enum WASMOpcode {
     DEBUG_OP_BREAK = 0xdc, /* debug break point */
 #endif
 
+#if WASM_ENABLE_SIMDE != 0
+    EXT_OP_SET_LOCAL_FAST_V128 = 0xdd,
+    EXT_OP_TEE_LOCAL_FAST_V128 = 0xde,
+    EXT_OP_COPY_STACK_TOP_V128 = 0xdf,
+    WASM_OP_GET_GLOBAL_V128 = 0xe0,
+    WASM_OP_SET_GLOBAL_V128 = 0xe1,
+    WASM_OP_SELECT_128 = 0xe2,
+#endif
+
     /* Post-MVP extend op prefix */
     WASM_OP_GC_PREFIX = 0xfb,
     WASM_OP_MISC_PREFIX = 0xfc,
@@ -325,7 +334,7 @@ typedef enum WASMGCEXTOpcode {
     WASM_OP_I31_GET_S = 0x1D, /* i31.get_s */
     WASM_OP_I31_GET_U = 0x1E, /* i31.get_u */
 
-    /* stringref related opcoded */
+    /* stringref related opcodes */
     WASM_OP_STRING_NEW_UTF8 = 0x80,          /* string.new_utf8 */
     WASM_OP_STRING_NEW_WTF16 = 0x81,         /* string.new_wtf16 */
     WASM_OP_STRING_CONST = 0x82,             /* string.const */
@@ -593,8 +602,8 @@ typedef enum WASMSimdEXTOpcode {
     /* placeholder            = 0xa2 */
     SIMD_i32x4_all_true = 0xa3,
     SIMD_i32x4_bitmask = 0xa4,
-    SIMD_i32x4_narrow_i64x2_s = 0xa5,
-    SIMD_i32x4_narrow_i64x2_u = 0xa6,
+    /* placeholder     = 0xa5 */
+    /* placeholder     = 0xa6 */
     SIMD_i32x4_extend_low_i16x8_s = 0xa7,
     SIMD_i32x4_extend_high_i16x8_s = 0xa8,
     SIMD_i32x4_extend_low_i16x8_u = 0xa9,
@@ -603,19 +612,19 @@ typedef enum WASMSimdEXTOpcode {
     SIMD_i32x4_shr_s = 0xac,
     SIMD_i32x4_shr_u = 0xad,
     SIMD_i32x4_add = 0xae,
-    SIMD_i32x4_add_sat_s = 0xaf,
-    SIMD_i32x4_add_sat_u = 0xb0,
+    /* placeholder = 0xaf */
+    /* placeholder = 0xb0 */
     SIMD_i32x4_sub = 0xb1,
-    SIMD_i32x4_sub_sat_s = 0xb2,
-    SIMD_i32x4_sub_sat_u = 0xb3,
-    /* placeholder            = 0xb4 */
+    /* placeholder = 0xb2 */
+    /* placeholder = 0xb3 */
+    /* placeholder = 0xb4 */
     SIMD_i32x4_mul = 0xb5,
     SIMD_i32x4_min_s = 0xb6,
     SIMD_i32x4_min_u = 0xb7,
     SIMD_i32x4_max_s = 0xb8,
     SIMD_i32x4_max_u = 0xb9,
     SIMD_i32x4_dot_i16x8_s = 0xba,
-    SIMD_i32x4_avgr_u = 0xbb,
+    /* placeholder         = 0xbb */
     SIMD_i32x4_extmul_low_i16x8_s = 0xbc,
     SIMD_i32x4_extmul_high_i16x8_s = 0xbd,
     SIMD_i32x4_extmul_low_i16x8_u = 0xbe,
@@ -658,7 +667,7 @@ typedef enum WASMSimdEXTOpcode {
     /* f32x4 operation */
     SIMD_f32x4_abs = 0xe0,
     SIMD_f32x4_neg = 0xe1,
-    SIMD_f32x4_round = 0xe2,
+    /* placeholder = 0xe2 */
     SIMD_f32x4_sqrt = 0xe3,
     SIMD_f32x4_add = 0xe4,
     SIMD_f32x4_sub = 0xe5,
@@ -672,7 +681,7 @@ typedef enum WASMSimdEXTOpcode {
     /* f64x2 operation */
     SIMD_f64x2_abs = 0xec,
     SIMD_f64x2_neg = 0xed,
-    SIMD_f64x2_round = 0xee,
+    /* placeholder = 0xee */
     SIMD_f64x2_sqrt = 0xef,
     SIMD_f64x2_add = 0xf0,
     SIMD_f64x2_sub = 0xf1,
@@ -779,16 +788,20 @@ typedef enum WASMAtomicEXTOpcode {
 #else
 #define DEF_DEBUG_BREAK_HANDLE()
 #endif
-
 #define SET_GOTO_TABLE_ELEM(opcode) [opcode] = HANDLE_OPCODE(opcode)
 
-#if WASM_ENABLE_JIT != 0 && WASM_ENABLE_SIMD != 0
-#define SET_GOTO_TABLE_SIMD_PREFIX_ELEM() \
-    SET_GOTO_TABLE_ELEM(WASM_OP_SIMD_PREFIX),
-#else
-#define SET_GOTO_TABLE_SIMD_PREFIX_ELEM()
-#endif
+#if WASM_ENABLE_SIMDE != 0
+#define DEF_EXT_V128_HANDLE()                                       \
+    SET_GOTO_TABLE_ELEM(EXT_OP_SET_LOCAL_FAST_V128),     /* 0xdd */ \
+        SET_GOTO_TABLE_ELEM(EXT_OP_TEE_LOCAL_FAST_V128), /* 0xde */ \
+        SET_GOTO_TABLE_ELEM(EXT_OP_COPY_STACK_TOP_V128), /* 0xdf */ \
+        SET_GOTO_TABLE_ELEM(WASM_OP_GET_GLOBAL_V128),    /* 0xe0 */ \
+        SET_GOTO_TABLE_ELEM(WASM_OP_SET_GLOBAL_V128),    /* 0xe1 */ \
+        SET_GOTO_TABLE_ELEM(WASM_OP_SELECT_128),         /* 0xe2 */
 
+#else
+#define DEF_EXT_V128_HANDLE()
+#endif
 /*
  * Macro used to generate computed goto tables for the C interpreter.
  */
@@ -1018,9 +1031,9 @@ typedef enum WASMAtomicEXTOpcode {
         HANDLE_OPCODE(EXT_OP_TRY),                   /* 0xdb */ \
         SET_GOTO_TABLE_ELEM(WASM_OP_GC_PREFIX),      /* 0xfb */ \
         SET_GOTO_TABLE_ELEM(WASM_OP_MISC_PREFIX),    /* 0xfc */ \
-        SET_GOTO_TABLE_SIMD_PREFIX_ELEM()            /* 0xfd */ \
+        SET_GOTO_TABLE_ELEM(WASM_OP_SIMD_PREFIX),    /* 0xfd */ \
         SET_GOTO_TABLE_ELEM(WASM_OP_ATOMIC_PREFIX),  /* 0xfe */ \
-        DEF_DEBUG_BREAK_HANDLE()                                \
+        DEF_DEBUG_BREAK_HANDLE() DEF_EXT_V128_HANDLE()          \
     };
 
 #ifdef __cplusplus

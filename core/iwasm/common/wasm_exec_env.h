@@ -89,6 +89,11 @@ typedef struct WASMExecEnv {
 
     uint64_t *sigpending_ptr;
 
+#if WASM_ENABLE_INSTRUCTION_METERING != 0
+    /* instructions to execute */
+    int instructions_to_execute;
+#endif
+
 #if WASM_ENABLE_FAST_JIT != 0
     /**
      * Cache for
@@ -119,6 +124,9 @@ typedef struct WASMExecEnv {
 
     /* whether current thread is detached */
     bool thread_is_detached;
+
+    /* whether the aux stack is allocated */
+    bool is_aux_stack_allocated;
 #endif
 
 #if WASM_ENABLE_GC != 0
@@ -134,6 +142,10 @@ typedef struct WASMExecEnv {
     void *attachment;
 
     void *user_data;
+
+    /* The boundary of native stack set by host embedder. It is used
+       if it is not NULL when calling wasm functions. */
+    uint8 *user_native_stack_boundary;
 
     /* The native thread handle of current thread */
     korp_tid handle;

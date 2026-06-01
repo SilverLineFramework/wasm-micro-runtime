@@ -15,6 +15,9 @@
 #if WASM_ENABLE_THREAD_MGR != 0
 #include "../libraries/thread-mgr/thread_manager.h"
 #endif
+#if WASM_ENABLE_WASI_NN != 0 || WASM_ENABLE_WASI_EPHEMERAL_NN != 0
+#include "wasi_nn_host.h"
+#endif
 
 static NativeSymbolsList g_native_symbols_list = NULL;
 
@@ -34,14 +37,16 @@ uint32
 get_spectest_export_apis(NativeSymbol **p_libc_builtin_apis);
 #endif
 
+#if WASM_ENABLE_SHARED_HEAP != 0
+uint32
+get_lib_shared_heap_export_apis(NativeSymbol **p_shared_heap_apis);
+#endif
+
 uint32
 get_libc_wasi_export_apis(NativeSymbol **p_libc_wasi_apis);
 
 uint32
 get_libc_wali_export_apis(NativeSymbol **p_libc_wali_apis);
-
-uint32_t
-get_wasi_nn_export_apis(NativeSymbol **p_libc_wasi_apis);
 
 uint32
 get_base_lib_export_apis(NativeSymbol **p_base_lib_apis);
@@ -78,7 +83,7 @@ uint32
 get_lib_rats_export_apis(NativeSymbol **p_lib_rats_apis);
 
 static bool
-compare_type_with_signautre(uint8 type, const char signature)
+compare_type_with_signature(uint8 type, const char signature)
 {
     const char num_sig_map[] = { 'F', 'f', 'I', 'i' };
 
@@ -91,9 +96,9 @@ compare_type_with_signautre(uint8 type, const char signature)
     if ('r' == signature
 #if WASM_ENABLE_GC != 0
 #if WASM_ENABLE_STRINGREF != 0
-        && (type >= REF_TYPE_STRINGVIEWITER && type <= REF_TYPE_FUNCREF)
+        && (type >= REF_TYPE_STRINGVIEWITER && type <= REF_TYPE_NULLFUNCREF)
 #else
-        && (type >= REF_TYPE_NULLREF && type <= REF_TYPE_FUNCREF)
+        && (type >= REF_TYPE_HT_NULLABLE && type <= REF_TYPE_NULLFUNCREF)
 #endif
 #else
         && type == VALUE_TYPE_EXTERNREF
@@ -129,10 +134,10 @@ check_symbol_signature(const WASMFuncType *type, const char *signature)
         sig = *p++;
 
         /* a f64/f32/i64/i32/externref parameter */
-        if (compare_type_with_signautre(type->types[i], sig))
+        if (compare_type_with_signature(type->types[i], sig))
             continue;
 
-        /* a pointer/string paramter */
+        /* a pointer/string parameter */
         if (type->types[i] != VALUE_TYPE_I32)
             /* pointer and string must be i32 type */
             return false;
@@ -163,7 +168,7 @@ check_symbol_signature(const WASMFuncType *type, const char *signature)
             return false;
 
         /* result types includes: f64,f32,i64,i32,externref */
-        if (!compare_type_with_signautre(type->types[i], *p))
+        if (!compare_type_with_signature(type->types[i], *p))
             return false;
 
         p++;
@@ -240,7 +245,7 @@ wasm_native_resolve_symbol(const char *module_name, const char *field_name,
 #if WASM_ENABLE_WAMR_COMPILER == 0
                 /* Output warning except running aot compiler */
                 LOG_WARNING("failed to check signature '%s' and resolve "
-                            "pointer params for import function (%s %s)\n",
+                            "pointer params for import function (%s, %s)\n",
                             signature, module_name, field_name);
 #endif
                 return NULL;
@@ -270,7 +275,7 @@ register_natives(const char *module_name, NativeSymbol *native_symbols,
     if (!(node = wasm_runtime_malloc(sizeof(NativeSymbolsNode))))
         return false;
 #if WASM_ENABLE_MEMORY_TRACING != 0
-    os_printf("Register native, size: %u\n", sizeof(NativeSymbolsNode));
+    LOG_VERBOSE("Register native, size: %u", sizeof(NativeSymbolsNode));
 #endif
 
     node->module_name = module_name;
@@ -500,17 +505,19 @@ wali_context_dtor(WASMModuleInstanceCommon *inst, void *ctx)
 
 #if WASM_ENABLE_QUICK_AOT_ENTRY != 0
 static bool
-quick_aot_entry_init();
+quick_aot_entry_init(void);
 #endif
 
 bool
 wasm_native_init()
 {
-#if WASM_ENABLE_SPEC_TEST != 0 || WASM_ENABLE_LIBC_BUILTIN != 0     \
-    || WASM_ENABLE_BASE_LIB != 0 || WASM_ENABLE_LIBC_EMCC != 0      \
-    || WASM_ENABLE_LIB_RATS != 0 || WASM_ENABLE_WASI_NN != 0        \
-    || WASM_ENABLE_APP_FRAMEWORK != 0 || WASM_ENABLE_LIBC_WASI != 0 \
-    || WASM_ENABLE_LIB_PTHREAD != 0 || WASM_ENABLE_LIB_WASI_THREADS != 0
+#if WASM_ENABLE_SPEC_TEST != 0 || WASM_ENABLE_LIBC_BUILTIN != 0          \
+    || WASM_ENABLE_BASE_LIB != 0 || WASM_ENABLE_LIBC_EMCC != 0           \
+    || WASM_ENABLE_LIB_RATS != 0 || WASM_ENABLE_WASI_NN != 0             \
+    || WASM_ENABLE_APP_FRAMEWORK != 0 || WASM_ENABLE_LIBC_WASI != 0      \
+    || WASM_ENABLE_LIB_PTHREAD != 0 || WASM_ENABLE_LIB_WASI_THREADS != 0 \
+    || WASM_ENABLE_WASI_NN != 0 || WASM_ENABLE_WASI_EPHEMERAL_NN != 0    \
+    || WASM_ENABLE_SHARED_HEAP != 0
     NativeSymbol *native_symbols;
     uint32 n_native_symbols;
 #endif
@@ -549,6 +556,14 @@ wasm_native_init()
     }
     n_native_symbols = get_libc_wali_export_apis(&native_symbols);
     if (!wasm_native_register_natives("wali", native_symbols, n_native_symbols))
+        goto fail;
+#endif
+
+#if WASM_ENABLE_SHARED_HEAP != 0
+    n_native_symbols = get_lib_shared_heap_export_apis(&native_symbols);
+    if (n_native_symbols > 0
+        && !wasm_native_register_natives("env", native_symbols,
+                                         n_native_symbols))
         goto fail;
 #endif
 
@@ -606,25 +621,31 @@ wasm_native_init()
         goto fail;
 #endif /* WASM_ENABLE_LIB_RATS */
 
-#if WASM_ENABLE_WASI_NN != 0
-    n_native_symbols = get_wasi_nn_export_apis(&native_symbols);
-#if WASM_ENABLE_WASI_EPHEMERAL_NN != 0
-#define wasi_nn_module_name "wasi_ephemeral_nn"
-#else /* WASM_ENABLE_WASI_EPHEMERAL_NN == 0 */
-#define wasi_nn_module_name "wasi_nn"
-#endif /* WASM_ENABLE_WASI_EPHEMERAL_NN != 0 */
-    if (!wasm_native_register_natives(wasi_nn_module_name, native_symbols,
-                                      n_native_symbols))
+#if WASM_ENABLE_WASI_NN != 0 || WASM_ENABLE_WASI_EPHEMERAL_NN != 0
+    if (!wasi_nn_initialize())
         goto fail;
-#endif
+
+    n_native_symbols = get_wasi_nn_export_apis(&native_symbols);
+    if (n_native_symbols > 0
+        && !wasm_native_register_natives(
+#if WASM_ENABLE_WASI_EPHEMERAL_NN != 0
+            "wasi_ephemeral_nn",
+#else
+            "wasi_nn",
+#endif /* WASM_ENABLE_WASI_EPHEMERAL_NN != 0 */
+            native_symbols, n_native_symbols))
+        goto fail;
+#endif /* WASM_ENABLE_WASI_NN != 0 || WASM_ENABLE_WASI_EPHEMERAL_NN != 0 */
 
 #if WASM_ENABLE_QUICK_AOT_ENTRY != 0
     if (!quick_aot_entry_init()) {
-#if WASM_ENABLE_SPEC_TEST != 0 || WASM_ENABLE_LIBC_BUILTIN != 0     \
-    || WASM_ENABLE_BASE_LIB != 0 || WASM_ENABLE_LIBC_EMCC != 0      \
-    || WASM_ENABLE_LIB_RATS != 0 || WASM_ENABLE_WASI_NN != 0        \
-    || WASM_ENABLE_APP_FRAMEWORK != 0 || WASM_ENABLE_LIBC_WASI != 0 \
-    || WASM_ENABLE_LIB_PTHREAD != 0 || WASM_ENABLE_LIB_WASI_THREADS != 0
+#if WASM_ENABLE_SPEC_TEST != 0 || WASM_ENABLE_LIBC_BUILTIN != 0          \
+    || WASM_ENABLE_BASE_LIB != 0 || WASM_ENABLE_LIBC_EMCC != 0           \
+    || WASM_ENABLE_LIB_RATS != 0 || WASM_ENABLE_WASI_NN != 0             \
+    || WASM_ENABLE_APP_FRAMEWORK != 0 || WASM_ENABLE_LIBC_WASI != 0      \
+    || WASM_ENABLE_LIB_PTHREAD != 0 || WASM_ENABLE_LIB_WASI_THREADS != 0 \
+    || WASM_ENABLE_WASI_NN != 0 || WASM_ENABLE_WASI_EPHEMERAL_NN != 0    \
+    || WASM_ENABLE_SHARED_HEAP != 0
         goto fail;
 #else
         return false;
@@ -633,11 +654,13 @@ wasm_native_init()
 #endif
 
     return true;
-#if WASM_ENABLE_SPEC_TEST != 0 || WASM_ENABLE_LIBC_BUILTIN != 0     \
-    || WASM_ENABLE_BASE_LIB != 0 || WASM_ENABLE_LIBC_EMCC != 0      \
-    || WASM_ENABLE_LIB_RATS != 0 || WASM_ENABLE_WASI_NN != 0        \
-    || WASM_ENABLE_APP_FRAMEWORK != 0 || WASM_ENABLE_LIBC_WASI != 0 \
-    || WASM_ENABLE_LIB_PTHREAD != 0 || WASM_ENABLE_LIB_WASI_THREADS != 0
+#if WASM_ENABLE_SPEC_TEST != 0 || WASM_ENABLE_LIBC_BUILTIN != 0          \
+    || WASM_ENABLE_BASE_LIB != 0 || WASM_ENABLE_LIBC_EMCC != 0           \
+    || WASM_ENABLE_LIB_RATS != 0 || WASM_ENABLE_WASI_NN != 0             \
+    || WASM_ENABLE_APP_FRAMEWORK != 0 || WASM_ENABLE_LIBC_WASI != 0      \
+    || WASM_ENABLE_LIB_PTHREAD != 0 || WASM_ENABLE_LIB_WASI_THREADS != 0 \
+    || WASM_ENABLE_WASI_NN != 0 || WASM_ENABLE_WASI_EPHEMERAL_NN != 0    \
+    || WASM_ENABLE_SHARED_HEAP != 0
 fail:
     wasm_native_destroy();
     return false;
@@ -655,12 +678,17 @@ wasm_native_destroy()
         g_wasi_context_key = NULL;
     }
 #endif
+
 #if WASM_ENABLE_LIB_PTHREAD != 0
     lib_pthread_destroy();
 #endif
 
 #if WASM_ENABLE_LIB_WASI_THREADS != 0
     lib_wasi_threads_destroy();
+#endif
+
+#if WASM_ENABLE_WASI_NN != 0 || WASM_ENABLE_WASI_EPHEMERAL_NN != 0
+    wasi_nn_destroy();
 #endif
 
     node = g_native_symbols_list;
@@ -675,39 +703,44 @@ wasm_native_destroy()
 
 #if WASM_ENABLE_QUICK_AOT_ENTRY != 0
 static void
-invoke_no_args_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_no_args_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *) = func_ptr;
     native_code(exec_env);
+    (void)argv;
+    (void)argv_ret;
 }
 static void
-invoke_no_args_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_no_args_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *) = func_ptr;
-    argv_ret[0] = native_code(exec_env);
+    argv_ret[0] = (uint32)native_code(exec_env);
+    (void)argv;
 }
 static void
-invoke_no_args_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_no_args_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *) = func_ptr;
     int64 ret = native_code(exec_env);
     PUT_I64_TO_ADDR(argv_ret, ret);
+    (void)argv;
 }
 
 static void
-invoke_i_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_i_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32) = func_ptr;
     native_code(exec_env, argv[0]);
+    (void)argv_ret;
 }
 static void
-invoke_i_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_i_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32) = func_ptr;
     argv_ret[0] = native_code(exec_env, argv[0]);
 }
 static void
-invoke_i_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_i_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32) = func_ptr;
     int64 ret = native_code(exec_env, argv[0]);
@@ -715,19 +748,20 @@ invoke_i_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_I_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_I_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv));
+    (void)argv_ret;
 }
 static void
-invoke_I_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_I_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64) = func_ptr;
     argv_ret[0] = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv));
 }
 static void
-invoke_I_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_I_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64) = func_ptr;
     int64 ret = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv));
@@ -735,19 +769,20 @@ invoke_I_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_ii_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_ii_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int32) = func_ptr;
     native_code(exec_env, argv[0], argv[1]);
+    (void)argv_ret;
 }
 static void
-invoke_ii_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_ii_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int32) = func_ptr;
     argv_ret[0] = native_code(exec_env, argv[0], argv[1]);
 }
 static void
-invoke_ii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_ii_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int32) = func_ptr;
     int64 ret = native_code(exec_env, argv[0], argv[1]);
@@ -755,20 +790,21 @@ invoke_ii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_iI_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iI_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int64) = func_ptr;
     native_code(exec_env, argv[0], GET_I64_FROM_ADDR((uint32 *)argv + 1));
+    (void)argv_ret;
 }
 static void
-invoke_iI_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iI_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int64) = func_ptr;
     argv_ret[0] =
         native_code(exec_env, argv[0], GET_I64_FROM_ADDR((uint32 *)argv + 1));
 }
 static void
-invoke_iI_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iI_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int64) = func_ptr;
     int64 ret =
@@ -777,20 +813,21 @@ invoke_iI_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_Ii_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_Ii_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64, int32) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv), argv[2]);
+    (void)argv_ret;
 }
 static void
-invoke_Ii_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_Ii_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64, int32) = func_ptr;
     argv_ret[0] =
         native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv), argv[2]);
 }
 static void
-invoke_Ii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_Ii_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64, int32) = func_ptr;
     int64 ret =
@@ -799,21 +836,22 @@ invoke_Ii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_II_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_II_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64, int64) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
                 GET_I64_FROM_ADDR((uint32 *)argv + 2));
+    (void)argv_ret;
 }
 static void
-invoke_II_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_II_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64, int64) = func_ptr;
     argv_ret[0] = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
                               GET_I64_FROM_ADDR((uint32 *)argv + 2));
 }
 static void
-invoke_II_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_II_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64, int64) = func_ptr;
     int64 ret = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -822,19 +860,20 @@ invoke_II_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_iii_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iii_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int32, int32) = func_ptr;
     native_code(exec_env, argv[0], argv[1], argv[2]);
+    (void)argv_ret;
 }
 static void
-invoke_iii_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iii_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int32, int32) = func_ptr;
     argv_ret[0] = native_code(exec_env, argv[0], argv[1], argv[2]);
 }
 static void
-invoke_iii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iii_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int32, int32) = func_ptr;
     int64 ret = native_code(exec_env, argv[0], argv[1], argv[2]);
@@ -842,21 +881,22 @@ invoke_iii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_iiI_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiI_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int32, int64) = func_ptr;
     native_code(exec_env, argv[0], argv[1],
                 GET_I64_FROM_ADDR((uint32 *)argv + 2));
+    (void)argv_ret;
 }
 static void
-invoke_iiI_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiI_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int32, int64) = func_ptr;
     argv_ret[0] = native_code(exec_env, argv[0], argv[1],
                               GET_I64_FROM_ADDR((uint32 *)argv + 2));
 }
 static void
-invoke_iiI_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiI_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int32, int64) = func_ptr;
     int64 ret = native_code(exec_env, argv[0], argv[1],
@@ -865,21 +905,22 @@ invoke_iiI_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_iIi_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIi_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int64, int32) = func_ptr;
     native_code(exec_env, argv[0], GET_I64_FROM_ADDR((uint32 *)argv + 1),
                 argv[3]);
+    (void)argv_ret;
 }
 static void
-invoke_iIi_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIi_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int64, int32) = func_ptr;
     argv_ret[0] = native_code(exec_env, argv[0],
                               GET_I64_FROM_ADDR((uint32 *)argv + 1), argv[3]);
 }
 static void
-invoke_iIi_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIi_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int64, int32) = func_ptr;
     int64 ret = native_code(exec_env, argv[0],
@@ -888,14 +929,15 @@ invoke_iIi_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_iII_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iII_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int64, int64) = func_ptr;
     native_code(exec_env, argv[0], GET_I64_FROM_ADDR((uint32 *)argv + 1),
                 GET_I64_FROM_ADDR((uint32 *)argv + 3));
+    (void)argv_ret;
 }
 static void
-invoke_iII_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iII_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int64, int64) = func_ptr;
     argv_ret[0] =
@@ -903,7 +945,7 @@ invoke_iII_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
                     GET_I64_FROM_ADDR((uint32 *)argv + 3));
 }
 static void
-invoke_iII_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iII_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int64, int64) = func_ptr;
     int64 ret =
@@ -913,20 +955,21 @@ invoke_iII_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_Iii_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_Iii_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64, int32, int32) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv), argv[2], argv[3]);
+    (void)argv_ret;
 }
 static void
-invoke_Iii_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_Iii_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64, int32, int32) = func_ptr;
     argv_ret[0] = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
                               argv[2], argv[3]);
 }
 static void
-invoke_Iii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_Iii_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64, int32, int32) = func_ptr;
     int64 ret = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -935,21 +978,22 @@ invoke_Iii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_IiI_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IiI_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64, int32, int64) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv), argv[2],
                 GET_I64_FROM_ADDR((uint32 *)argv + 3));
+    (void)argv_ret;
 }
 static void
-invoke_IiI_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IiI_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64, int32, int64) = func_ptr;
     argv_ret[0] = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
                               argv[2], GET_I64_FROM_ADDR((uint32 *)argv + 3));
 }
 static void
-invoke_IiI_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IiI_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64, int32, int64) = func_ptr;
     int64 ret = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -958,21 +1002,22 @@ invoke_IiI_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_IIi_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIi_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64, int64, int32) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
                 GET_I64_FROM_ADDR((uint32 *)argv + 2), argv[4]);
+    (void)argv_ret;
 }
 static void
-invoke_IIi_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIi_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64, int64, int32) = func_ptr;
     argv_ret[0] = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
                               GET_I64_FROM_ADDR((uint32 *)argv + 2), argv[4]);
 }
 static void
-invoke_IIi_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIi_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64, int64, int32) = func_ptr;
     int64 ret = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -981,15 +1026,16 @@ invoke_IIi_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_III_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_III_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64, int64, int64) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
                 GET_I64_FROM_ADDR((uint32 *)argv + 2),
                 GET_I64_FROM_ADDR((uint32 *)argv + 4));
+    (void)argv_ret;
 }
 static void
-invoke_III_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_III_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64, int64, int64) = func_ptr;
     argv_ret[0] = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -997,7 +1043,7 @@ invoke_III_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
                               GET_I64_FROM_ADDR((uint32 *)argv + 4));
 }
 static void
-invoke_III_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_III_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64, int64, int64) = func_ptr;
     int64 ret = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -1007,19 +1053,20 @@ invoke_III_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_iiii_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiii_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int32, int32, int32) = func_ptr;
     native_code(exec_env, argv[0], argv[1], argv[2], argv[3]);
+    (void)argv_ret;
 }
 static void
-invoke_iiii_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiii_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int32, int32, int32) = func_ptr;
     argv_ret[0] = native_code(exec_env, argv[0], argv[1], argv[2], argv[3]);
 }
 static void
-invoke_iiii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiii_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int32, int32, int32) = func_ptr;
     int64 ret = native_code(exec_env, argv[0], argv[1], argv[2], argv[3]);
@@ -1027,21 +1074,22 @@ invoke_iiii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_iiiI_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiiI_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int32, int32, int64) = func_ptr;
     native_code(exec_env, argv[0], argv[1], argv[2],
                 GET_I64_FROM_ADDR((uint32 *)argv + 3));
+    (void)argv_ret;
 }
 static void
-invoke_iiiI_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiiI_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int32, int32, int64) = func_ptr;
     argv_ret[0] = native_code(exec_env, argv[0], argv[1], argv[2],
                               GET_I64_FROM_ADDR((uint32 *)argv + 3));
 }
 static void
-invoke_iiiI_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiiI_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int32, int32, int64) = func_ptr;
     int64 ret = native_code(exec_env, argv[0], argv[1], argv[2],
@@ -1050,21 +1098,22 @@ invoke_iiiI_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_iiIi_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiIi_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int32, int64, int32) = func_ptr;
     native_code(exec_env, argv[0], argv[1],
                 GET_I64_FROM_ADDR((uint32 *)argv + 2), argv[4]);
+    (void)argv_ret;
 }
 static void
-invoke_iiIi_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiIi_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int32, int64, int32) = func_ptr;
     argv_ret[0] = native_code(exec_env, argv[0], argv[1],
                               GET_I64_FROM_ADDR((uint32 *)argv + 2), argv[4]);
 }
 static void
-invoke_iiIi_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiIi_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int32, int64, int32) = func_ptr;
     int64 ret = native_code(exec_env, argv[0], argv[1],
@@ -1073,15 +1122,16 @@ invoke_iiIi_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_iiII_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiII_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int32, int64, int64) = func_ptr;
     native_code(exec_env, argv[0], argv[1],
                 GET_I64_FROM_ADDR((uint32 *)argv + 2),
                 GET_I64_FROM_ADDR((uint32 *)argv + 4));
+    (void)argv_ret;
 }
 static void
-invoke_iiII_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiII_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int32, int64, int64) = func_ptr;
     argv_ret[0] = native_code(exec_env, argv[0], argv[1],
@@ -1089,7 +1139,7 @@ invoke_iiII_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
                               GET_I64_FROM_ADDR((uint32 *)argv + 4));
 }
 static void
-invoke_iiII_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiII_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int32, int64, int64) = func_ptr;
     int64 ret = native_code(exec_env, argv[0], argv[1],
@@ -1099,14 +1149,15 @@ invoke_iiII_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_iIii_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIii_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int64, int32, int32) = func_ptr;
     native_code(exec_env, argv[0], GET_I64_FROM_ADDR((uint32 *)argv + 1),
                 argv[3], argv[4]);
+    (void)argv_ret;
 }
 static void
-invoke_iIii_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIii_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int64, int32, int32) = func_ptr;
     argv_ret[0] =
@@ -1114,7 +1165,7 @@ invoke_iIii_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
                     argv[3], argv[4]);
 }
 static void
-invoke_iIii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIii_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int64, int32, int32) = func_ptr;
     int64 ret =
@@ -1124,14 +1175,15 @@ invoke_iIii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_iIiI_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIiI_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int64, int32, int64) = func_ptr;
     native_code(exec_env, argv[0], GET_I64_FROM_ADDR((uint32 *)argv + 1),
                 argv[3], GET_I64_FROM_ADDR((uint32 *)argv + 4));
+    (void)argv_ret;
 }
 static void
-invoke_iIiI_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIiI_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int64, int32, int64) = func_ptr;
     argv_ret[0] =
@@ -1139,7 +1191,7 @@ invoke_iIiI_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
                     argv[3], GET_I64_FROM_ADDR((uint32 *)argv + 4));
 }
 static void
-invoke_iIiI_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIiI_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int64, int32, int64) = func_ptr;
     int64 ret =
@@ -1149,14 +1201,15 @@ invoke_iIiI_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_iIIi_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIIi_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int64, int64, int32) = func_ptr;
     native_code(exec_env, argv[0], GET_I64_FROM_ADDR((uint32 *)argv + 1),
                 GET_I64_FROM_ADDR((uint32 *)argv + 3), argv[5]);
+    (void)argv_ret;
 }
 static void
-invoke_iIIi_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIIi_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int64, int64, int32) = func_ptr;
     argv_ret[0] =
@@ -1164,7 +1217,7 @@ invoke_iIIi_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
                     GET_I64_FROM_ADDR((uint32 *)argv + 3), argv[5]);
 }
 static void
-invoke_iIIi_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIIi_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int64, int64, int32) = func_ptr;
     int64 ret =
@@ -1174,15 +1227,16 @@ invoke_iIIi_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_iIII_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIII_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int64, int64, int64) = func_ptr;
     native_code(exec_env, argv[0], GET_I64_FROM_ADDR((uint32 *)argv + 1),
                 GET_I64_FROM_ADDR((uint32 *)argv + 3),
                 GET_I64_FROM_ADDR((uint32 *)argv + 5));
+    (void)argv_ret;
 }
 static void
-invoke_iIII_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIII_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int64, int64, int64) = func_ptr;
     argv_ret[0] =
@@ -1191,7 +1245,7 @@ invoke_iIII_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
                     GET_I64_FROM_ADDR((uint32 *)argv + 5));
 }
 static void
-invoke_iIII_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iIII_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int64, int64, int64) = func_ptr;
     int64 ret =
@@ -1202,21 +1256,22 @@ invoke_iIII_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_Iiii_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_Iiii_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64, int32, int32, int32) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv), argv[2], argv[3],
                 argv[4]);
+    (void)argv_ret;
 }
 static void
-invoke_Iiii_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_Iiii_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64, int32, int32, int32) = func_ptr;
     argv_ret[0] = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
                               argv[2], argv[3], argv[4]);
 }
 static void
-invoke_Iiii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_Iiii_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64, int32, int32, int32) = func_ptr;
     int64 ret = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -1225,15 +1280,16 @@ invoke_Iiii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_IiiI_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IiiI_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64, int32, int32, int64) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv), argv[2], argv[3],
                 GET_I64_FROM_ADDR((uint32 *)argv + 4));
+    (void)argv_ret;
 }
 
 static void
-invoke_IiiI_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IiiI_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64, int32, int32, int64) = func_ptr;
     argv_ret[0] =
@@ -1242,7 +1298,7 @@ invoke_IiiI_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_IiiI_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IiiI_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64, int32, int32, int64) = func_ptr;
     int64 ret =
@@ -1252,14 +1308,15 @@ invoke_IiiI_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_IiIi_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IiIi_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64, int32, int64, int32) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv), argv[2],
                 GET_I64_FROM_ADDR((uint32 *)argv + 3), argv[5]);
+    (void)argv_ret;
 }
 static void
-invoke_IiIi_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IiIi_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64, int32, int64, int32) = func_ptr;
     argv_ret[0] =
@@ -1267,7 +1324,7 @@ invoke_IiIi_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
                     GET_I64_FROM_ADDR((uint32 *)argv + 3), argv[5]);
 }
 static void
-invoke_IiIi_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IiIi_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64, int32, int64, int32) = func_ptr;
     int64 ret =
@@ -1277,15 +1334,16 @@ invoke_IiIi_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_IiII_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IiII_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64, int32, int64, int64) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv), argv[2],
                 GET_I64_FROM_ADDR((uint32 *)argv + 3),
                 GET_I64_FROM_ADDR((uint32 *)argv + 5));
+    (void)argv_ret;
 }
 static void
-invoke_IiII_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IiII_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64, int32, int64, int64) = func_ptr;
     argv_ret[0] = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -1293,7 +1351,7 @@ invoke_IiII_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
                               GET_I64_FROM_ADDR((uint32 *)argv + 5));
 }
 static void
-invoke_IiII_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IiII_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64, int32, int64, int64) = func_ptr;
     int64 ret = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -1303,14 +1361,15 @@ invoke_IiII_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_IIii_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIii_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64, int64, int32, int32) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
                 GET_I64_FROM_ADDR((uint32 *)argv + 2), argv[4], argv[5]);
+    (void)argv_ret;
 }
 static void
-invoke_IIii_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIii_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64, int64, int32, int32) = func_ptr;
     argv_ret[0] =
@@ -1318,7 +1377,7 @@ invoke_IIii_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
                     GET_I64_FROM_ADDR((uint32 *)argv + 2), argv[4], argv[5]);
 }
 static void
-invoke_IIii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIii_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64, int64, int32, int32) = func_ptr;
     int64 ret =
@@ -1328,15 +1387,16 @@ invoke_IIii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_IIiI_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIiI_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64, int64, int32, int64) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
                 GET_I64_FROM_ADDR((uint32 *)argv + 2), argv[4],
                 GET_I64_FROM_ADDR((uint32 *)argv + 5));
+    (void)argv_ret;
 }
 static void
-invoke_IIiI_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIiI_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64, int64, int32, int64) = func_ptr;
     argv_ret[0] = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -1344,7 +1404,7 @@ invoke_IIiI_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
                               GET_I64_FROM_ADDR((uint32 *)argv + 5));
 }
 static void
-invoke_IIiI_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIiI_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64, int64, int32, int64) = func_ptr;
     int64 ret = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -1354,15 +1414,16 @@ invoke_IIiI_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_IIIi_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIIi_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64, int64, int64, int32) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
                 GET_I64_FROM_ADDR((uint32 *)argv + 2),
                 GET_I64_FROM_ADDR((uint32 *)argv + 4), argv[6]);
+    (void)argv_ret;
 }
 static void
-invoke_IIIi_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIIi_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64, int64, int64, int32) = func_ptr;
     argv_ret[0] = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -1370,7 +1431,7 @@ invoke_IIIi_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
                               GET_I64_FROM_ADDR((uint32 *)argv + 4), argv[6]);
 }
 static void
-invoke_IIIi_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIIi_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64, int64, int64, int32) = func_ptr;
     int64 ret = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -1380,16 +1441,17 @@ invoke_IIIi_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_IIII_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIII_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int64, int64, int64, int64) = func_ptr;
     native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
                 GET_I64_FROM_ADDR((uint32 *)argv + 2),
                 GET_I64_FROM_ADDR((uint32 *)argv + 4),
                 GET_I64_FROM_ADDR((uint32 *)argv + 6));
+    (void)argv_ret;
 }
 static void
-invoke_IIII_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIII_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int64, int64, int64, int64) = func_ptr;
     argv_ret[0] = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -1398,7 +1460,7 @@ invoke_IIII_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
                               GET_I64_FROM_ADDR((uint32 *)argv + 6));
 }
 static void
-invoke_IIII_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_IIII_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int64, int64, int64, int64) = func_ptr;
     int64 ret = native_code(exec_env, GET_I64_FROM_ADDR((uint32 *)argv),
@@ -1409,14 +1471,15 @@ invoke_IIII_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
 }
 
 static void
-invoke_iiiii_v(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiiii_v(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     void (*native_code)(WASMExecEnv *, int32, int32, int32, int32, int32) =
         func_ptr;
     native_code(exec_env, argv[0], argv[1], argv[2], argv[3], argv[4]);
+    (void)argv_ret;
 }
 static void
-invoke_iiiii_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiiii_i(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int32 (*native_code)(WASMExecEnv *, int32, int32, int32, int32, int32) =
         func_ptr;
@@ -1424,7 +1487,7 @@ invoke_iiiii_i(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
         native_code(exec_env, argv[0], argv[1], argv[2], argv[3], argv[4]);
 }
 static void
-invoke_iiiii_I(void *func_ptr, void *exec_env, int32 *argv, int32 *argv_ret)
+invoke_iiiii_I(void *func_ptr, void *exec_env, uint32 *argv, uint32 *argv_ret)
 {
     int64 (*native_code)(WASMExecEnv *, int32, int32, int32, int32, int32) =
         func_ptr;
@@ -1490,7 +1553,7 @@ quick_aot_entry_cmp(const void *quick_aot_entry1, const void *quick_aot_entry2)
 }
 
 static bool
-quick_aot_entry_init()
+quick_aot_entry_init(void)
 {
     qsort(quick_aot_entries, sizeof(quick_aot_entries) / sizeof(QuickAOTEntry),
           sizeof(QuickAOTEntry), quick_aot_entry_cmp);

@@ -7,6 +7,7 @@
 #include "aot_emit_exception.h"
 #include "aot_emit_control.h"
 #include "aot_emit_table.h"
+#include "aot_stack_frame_comp.h"
 #include "../aot/aot_runtime.h"
 #if WASM_ENABLE_GC != 0
 #include "aot_emit_gc.h"
@@ -346,7 +347,8 @@ call_aot_invoke_c_api_native(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
 
     /* Get &c_api_func_imports[func_idx], note size of CApiFuncImport
        is pointer_size * 3 */
-    offset = I32_CONST((comp_ctx->pointer_size * 3) * import_func_idx);
+    offset = I32_CONST((unsigned long long)comp_ctx->pointer_size * 3
+                       * import_func_idx);
     CHECK_LLVM_CONST(offset);
     c_api_func_import =
         LLVMBuildInBoundsGEP2(comp_ctx->builder, INT8_TYPE, c_api_func_imports,
@@ -682,24 +684,29 @@ alloc_frame_for_aot_func(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
 
     new_frame = wasm_stack_top;
 
-    if (!(check_wasm_stack_succ = LLVMAppendBasicBlockInContext(
-              comp_ctx->context, func_ctx->func, "check_wasm_stack_succ"))) {
-        aot_set_last_error("llvm add basic block failed.");
-        return false;
-    }
+    if (comp_ctx->call_stack_features.bounds_checks) {
+        if (!(check_wasm_stack_succ = LLVMAppendBasicBlockInContext(
+                  comp_ctx->context, func_ctx->func,
+                  "check_wasm_stack_succ"))) {
+            aot_set_last_error("llvm add basic block failed.");
+            return false;
+        }
 
-    LLVMMoveBasicBlockAfter(check_wasm_stack_succ,
-                            LLVMGetInsertBlock(comp_ctx->builder));
+        LLVMMoveBasicBlockAfter(check_wasm_stack_succ,
+                                LLVMGetInsertBlock(comp_ctx->builder));
 
-    if (!(cmp = LLVMBuildICmp(comp_ctx->builder, LLVMIntUGT, wasm_stack_top_max,
-                              wasm_stack_top_bound, "cmp"))) {
-        aot_set_last_error("llvm build icmp failed");
-        return false;
-    }
+        if (!(cmp = LLVMBuildICmp(comp_ctx->builder, LLVMIntUGT,
+                                  wasm_stack_top_max, wasm_stack_top_bound,
+                                  "cmp"))) {
+            aot_set_last_error("llvm build icmp failed");
+            return false;
+        }
 
-    if (!(aot_emit_exception(comp_ctx, func_ctx, EXCE_OPERAND_STACK_OVERFLOW,
-                             true, cmp, check_wasm_stack_succ))) {
-        return false;
+        if (!(aot_emit_exception(comp_ctx, func_ctx,
+                                 EXCE_OPERAND_STACK_OVERFLOW, true, cmp,
+                                 check_wasm_stack_succ))) {
+            return false;
+        }
     }
 
 #if WASM_ENABLE_GC != 0
@@ -879,25 +886,28 @@ alloc_frame_for_aot_func(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
     }
 
     if (!comp_ctx->is_jit_mode) {
-        /* aot mode: new_frame->func_idx = func_idx */
-        func_idx_val = comp_ctx->pointer_size == sizeof(uint64)
-                           ? I64_CONST(func_idx)
-                           : I32_CONST(func_idx);
-        offset = I32_CONST(comp_ctx->pointer_size);
-        CHECK_LLVM_CONST(func_idx_val);
-        CHECK_LLVM_CONST(offset);
-        if (!(func_idx_ptr =
-                  LLVMBuildInBoundsGEP2(comp_ctx->builder, INT8_TYPE, new_frame,
-                                        &offset, 1, "func_idx_addr"))
-            || !(func_idx_ptr =
-                     LLVMBuildBitCast(comp_ctx->builder, func_idx_ptr,
-                                      INTPTR_T_PTR_TYPE, "func_idx_ptr"))) {
-            aot_set_last_error("llvm get func_idx_ptr failed");
-            return false;
-        }
-        if (!LLVMBuildStore(comp_ctx->builder, func_idx_val, func_idx_ptr)) {
-            aot_set_last_error("llvm build store failed");
-            return false;
+        if (comp_ctx->call_stack_features.func_idx) {
+            /* aot mode: new_frame->func_idx = func_idx */
+            func_idx_val = comp_ctx->pointer_size == sizeof(uint64)
+                               ? I64_CONST(func_idx)
+                               : I32_CONST(func_idx);
+            offset = I32_CONST(comp_ctx->pointer_size);
+            CHECK_LLVM_CONST(func_idx_val);
+            CHECK_LLVM_CONST(offset);
+            if (!(func_idx_ptr = LLVMBuildInBoundsGEP2(
+                      comp_ctx->builder, INT8_TYPE, new_frame, &offset, 1,
+                      "func_idx_addr"))
+                || !(func_idx_ptr =
+                         LLVMBuildBitCast(comp_ctx->builder, func_idx_ptr,
+                                          INTPTR_T_PTR_TYPE, "func_idx_ptr"))) {
+                aot_set_last_error("llvm get func_idx_ptr failed");
+                return false;
+            }
+            if (!LLVMBuildStore(comp_ctx->builder, func_idx_val,
+                                func_idx_ptr)) {
+                aot_set_last_error("llvm build store failed");
+                return false;
+            }
         }
     }
     else {
@@ -1285,6 +1295,10 @@ commit_params_to_frame_of_import_func(AOTCompContext *comp_ctx,
 {
     uint32 i, n;
 
+    if (!comp_ctx->call_stack_features.values) {
+        return true;
+    }
+
     for (i = 0, n = 0; i < func_type->param_count; i++, n++) {
         switch (func_type->types[i]) {
             case VALUE_TYPE_I32:
@@ -1394,6 +1408,9 @@ aot_compile_op_call(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
     LLVMValueRef *param_values = NULL, value_ret = NULL, func;
     LLVMValueRef import_func_idx, res;
     LLVMValueRef ext_ret, ext_ret_ptr, ext_ret_idx;
+#if WASM_ENABLE_AOT_STACK_FRAME != 0
+    LLVMValueRef func_idx_ref;
+#endif
     int32 i, j = 0, param_count, result_count, ext_ret_count;
     uint64 total_size;
     uint8 wasm_ret_type;
@@ -1438,12 +1455,28 @@ aot_compile_op_call(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
             return false;
     }
 
-    if (comp_ctx->enable_aux_stack_frame) {
 #if WASM_ENABLE_AOT_STACK_FRAME != 0
-        if (!alloc_frame_for_aot_func(comp_ctx, func_ctx, func_idx))
-            return false;
-#endif
+    if (comp_ctx->aux_stack_frame_type) {
+        if (func_idx < import_func_count
+            && comp_ctx->call_stack_features.frame_per_function) {
+            INT_CONST(func_idx_ref, func_idx, I32_TYPE, true);
+            if (!aot_alloc_frame_per_function_frame_for_aot_func(
+                    comp_ctx, func_ctx, func_idx_ref)) {
+                return false;
+            }
+        }
+        else if (!comp_ctx->call_stack_features.frame_per_function) {
+            if (comp_ctx->aux_stack_frame_type
+                != AOT_STACK_FRAME_TYPE_STANDARD) {
+                aot_set_last_error("unsupported mode");
+                return false;
+            }
+            if (!alloc_frame_for_aot_func(comp_ctx, func_ctx, func_idx)) {
+                return false;
+            }
+        }
     }
+#endif
 
     /* Get param cell number */
     param_cell_num = func_type->param_cell_num;
@@ -1513,7 +1546,7 @@ aot_compile_op_call(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
     }
 
     if (func_idx < import_func_count) {
-        if (comp_ctx->enable_aux_stack_frame
+        if (comp_ctx->aux_stack_frame_type == AOT_STACK_FRAME_TYPE_STANDARD
             && !commit_params_to_frame_of_import_func(
                 comp_ctx, func_ctx, func_type, param_values + 1)) {
             goto fail;
@@ -1800,16 +1833,31 @@ aot_compile_op_call(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
                 aot_set_last_error("llvm build load failed.");
                 goto fail;
             }
+            LLVMSetAlignment(ext_ret, 4);
             PUSH(ext_ret, ext_ret_types[i]);
         }
     }
 
-    if (comp_ctx->enable_aux_stack_frame) {
 #if WASM_ENABLE_AOT_STACK_FRAME != 0
-        if (!free_frame_for_aot_func(comp_ctx, func_ctx))
-            goto fail;
-#endif
+    if (comp_ctx->aux_stack_frame_type) {
+        if (func_idx < import_func_count
+            && comp_ctx->call_stack_features.frame_per_function) {
+            if (!aot_free_frame_per_function_frame_for_aot_func(comp_ctx,
+                                                                func_ctx)) {
+                goto fail;
+            }
+        }
+        else if (!comp_ctx->call_stack_features.frame_per_function) {
+            if (comp_ctx->aux_stack_frame_type
+                != AOT_STACK_FRAME_TYPE_STANDARD) {
+                aot_set_last_error("unsupported mode");
+            }
+            if (!free_frame_for_aot_func(comp_ctx, func_ctx)) {
+                goto fail;
+            }
+        }
     }
+#endif
 
     /* Insert suspend check point */
     if (comp_ctx->enable_thread_mgr) {
@@ -1825,6 +1873,52 @@ fail:
         wasm_runtime_free(param_values);
     return ret;
 }
+
+#if WASM_ENABLE_GC != 0
+static LLVMValueRef
+call_aot_func_type_is_super_of_func(AOTCompContext *comp_ctx,
+                                    AOTFuncContext *func_ctx,
+                                    LLVMValueRef type_idx1,
+                                    LLVMValueRef type_idx2)
+{
+    LLVMValueRef param_values[3], ret_value, value, func;
+    LLVMTypeRef param_types[3], ret_type, func_type, func_ptr_type;
+
+    param_types[0] = comp_ctx->aot_inst_type;
+    param_types[1] = I32_TYPE;
+    param_types[2] = I32_TYPE;
+    ret_type = INT8_TYPE;
+
+#if WASM_ENABLE_JIT != 0
+    if (comp_ctx->is_jit_mode)
+        GET_AOT_FUNCTION(llvm_jit_func_type_is_super_of, 3);
+    else
+#endif
+        GET_AOT_FUNCTION(aot_func_type_is_super_of, 3);
+
+    param_values[0] = func_ctx->aot_inst;
+    param_values[1] = type_idx1;
+    param_values[2] = type_idx2;
+
+    if (!(ret_value =
+              LLVMBuildCall2(comp_ctx->builder, func_type, func, param_values,
+                             3, "call_aot_func_type_is_super_of"))) {
+        aot_set_last_error("llvm build call failed.");
+        return NULL;
+    }
+
+    if (!(ret_value = LLVMBuildICmp(comp_ctx->builder, LLVMIntEQ, ret_value,
+                                    I8_ZERO, "check_fail"))) {
+        aot_set_last_error("llvm build icmp failed.");
+        return NULL;
+    }
+
+    return ret_value;
+
+fail:
+    return NULL;
+}
+#endif
 
 static bool
 call_aot_call_indirect_func(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
@@ -1976,6 +2070,7 @@ call_aot_call_indirect_func(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
             aot_set_last_error("llvm build load failed.");
             return false;
         }
+        LLVMSetAlignment(value_rets[i], 4);
         cell_num += wasm_value_type_cell_num_internal(wasm_ret_types[i],
                                                       comp_ctx->pointer_size);
     }
@@ -1997,6 +2092,9 @@ aot_compile_op_call_indirect(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
     LLVMValueRef ext_ret_offset, ext_ret_ptr, ext_ret, res;
     LLVMValueRef *param_values = NULL, *value_rets = NULL;
     LLVMValueRef *result_phis = NULL, value_ret, import_func_count;
+#if WASM_ENABLE_MEMORY64 != 0
+    LLVMValueRef u32_max, u32_cmp_result = NULL;
+#endif
     LLVMTypeRef *param_types = NULL, ret_type;
     LLVMTypeRef llvm_func_type, llvm_func_ptr_type;
     LLVMTypeRef ext_ret_ptr_type;
@@ -2018,15 +2116,23 @@ aot_compile_op_call_indirect(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
         return false;
     }
 
-    /* Find the equivalent function type whose type index is the smallest:
-       the callee function's type index is also converted to the smallest
-       one in wasm loader, so we can just check whether the two type indexes
-       are equal (the type index of call_indirect opcode and callee func),
-       we don't need to check whether the whole function types are equal,
-       including param types and result types. */
-    type_idx =
-        wasm_get_smallest_type_idx((WASMTypePtr *)comp_ctx->comp_data->types,
-                                   comp_ctx->comp_data->type_count, type_idx);
+    if (!comp_ctx->enable_gc) {
+        /* Find the equivalent function type whose type index is the smallest:
+           the callee function's type index is also converted to the smallest
+           one in wasm loader, so we can just check whether the two type indexes
+           are equal (the type index of call_indirect opcode and callee func),
+           we don't need to check whether the whole function types are equal,
+           including param types and result types. */
+        type_idx = wasm_get_smallest_type_idx(
+            (WASMTypePtr *)comp_ctx->comp_data->types,
+            comp_ctx->comp_data->type_count, type_idx);
+    }
+    else {
+        /* Call aot_func_type_is_super_of to check whether the func type
+           provided in the bytecode is a super type of the func type of
+           the function to call */
+    }
+
     ftype_idx_const = I32_CONST(type_idx);
     CHECK_LLVM_CONST(ftype_idx_const);
 
@@ -2053,7 +2159,7 @@ aot_compile_op_call_indirect(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
     func_param_count = func_type->param_count;
     func_result_count = func_type->result_count;
 
-    POP_I32(elem_idx);
+    POP_TBL_ELEM_IDX(elem_idx);
 
     /* get the cur size of the table instance */
     if (!(offset = I32_CONST(get_tbl_inst_offset(comp_ctx, func_ctx, tbl_idx)
@@ -2071,7 +2177,7 @@ aot_compile_op_call_indirect(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
 
     if (!(table_size_const =
               LLVMBuildBitCast(comp_ctx->builder, table_size_const,
-                               INT32_PTR_TYPE, "cur_siuze_i32p"))) {
+                               INT32_PTR_TYPE, "cur_size_i32p"))) {
         HANDLE_FAILURE("LLVMBuildBitCast");
         goto fail;
     }
@@ -2082,6 +2188,27 @@ aot_compile_op_call_indirect(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
         goto fail;
     }
 
+#if WASM_ENABLE_MEMORY64 != 0
+    /* Check if elem index >= UINT32_MAX */
+    if (IS_TABLE64(tbl_idx)) {
+        if (!(u32_max = I64_CONST(UINT32_MAX))) {
+            aot_set_last_error("llvm build const failed");
+            goto fail;
+        }
+        if (!(u32_cmp_result =
+                  LLVMBuildICmp(comp_ctx->builder, LLVMIntUGE, elem_idx,
+                                u32_max, "cmp_elem_idx_u32_max"))) {
+            aot_set_last_error("llvm build icmp failed.");
+            goto fail;
+        }
+        if (!(elem_idx = LLVMBuildTrunc(comp_ctx->builder, elem_idx, I32_TYPE,
+                                        "elem_idx_i32"))) {
+            aot_set_last_error("llvm build trunc failed.");
+            goto fail;
+        }
+    }
+#endif
+
     /* Check if (uint32)elem index >= table size */
     if (!(cmp_elem_idx = LLVMBuildICmp(comp_ctx->builder, LLVMIntUGE, elem_idx,
                                        table_size_const, "cmp_elem_idx"))) {
@@ -2089,7 +2216,19 @@ aot_compile_op_call_indirect(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
         goto fail;
     }
 
-    /* Throw exception if elem index >= table size */
+#if WASM_ENABLE_MEMORY64 != 0
+    if (IS_TABLE64(tbl_idx)) {
+        if (!(cmp_elem_idx =
+                  LLVMBuildOr(comp_ctx->builder, cmp_elem_idx, u32_cmp_result,
+                              "larger_than_u32_max_or_cur_size"))) {
+            aot_set_last_error("llvm build or failed.");
+            goto fail;
+        }
+    }
+#endif
+
+    /* Throw exception if elem index >= table size or elem index >= UINT32_MAX
+     */
     if (!(check_elem_idx_succ = LLVMAppendBasicBlockInContext(
               comp_ctx->context, func_ctx->func, "check_elem_idx_succ"))) {
         aot_set_last_error("llvm add basic block failed.");
@@ -2254,11 +2393,23 @@ aot_compile_op_call_indirect(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
         goto fail;
     }
 
-    /* Check if function type index not equal */
-    if (!(cmp_ftype_idx = LLVMBuildICmp(comp_ctx->builder, LLVMIntNE, ftype_idx,
-                                        ftype_idx_const, "cmp_ftype_idx"))) {
-        aot_set_last_error("llvm build icmp failed.");
-        goto fail;
+#if WASM_ENABLE_GC != 0
+    if (comp_ctx->enable_gc) {
+        if (!(cmp_ftype_idx = call_aot_func_type_is_super_of_func(
+                  comp_ctx, func_ctx, ftype_idx_const, ftype_idx))) {
+            goto fail;
+        }
+    }
+    else
+#endif
+    {
+        /* Check if function type index not equal */
+        if (!(cmp_ftype_idx =
+                  LLVMBuildICmp(comp_ctx->builder, LLVMIntNE, ftype_idx,
+                                ftype_idx_const, "cmp_ftype_idx"))) {
+            aot_set_last_error("llvm build icmp failed.");
+            goto fail;
+        }
     }
 
     /* Throw exception if ftype_idx != ftype_idx_const */
@@ -2364,7 +2515,8 @@ aot_compile_op_call_indirect(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
         goto fail;
     }
 
-    if (comp_ctx->enable_aux_stack_frame) {
+    if (comp_ctx->aux_stack_frame_type
+        && !comp_ctx->call_stack_features.frame_per_function) {
 #if WASM_ENABLE_AOT_STACK_FRAME != 0
         /*  TODO: use current frame instead of allocating new frame
                   for WASM_OP_RETURN_CALL_INDIRECT */
@@ -2433,7 +2585,13 @@ aot_compile_op_call_indirect(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
     /* Translate call import block */
     LLVMPositionBuilderAtEnd(comp_ctx->builder, block_call_import);
 
-    if (comp_ctx->enable_aux_stack_frame
+    if (comp_ctx->aot_frame && comp_ctx->call_stack_features.frame_per_function
+        && !aot_alloc_frame_per_function_frame_for_aot_func(comp_ctx, func_ctx,
+                                                            func_idx)) {
+        goto fail;
+    }
+
+    if (comp_ctx->aux_stack_frame_type == AOT_STACK_FRAME_TYPE_STANDARD
         && !commit_params_to_frame_of_import_func(comp_ctx, func_ctx, func_type,
                                                   param_values + 1)) {
         goto fail;
@@ -2469,6 +2627,12 @@ aot_compile_op_call_indirect(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
     if ((comp_ctx->enable_bound_check || is_win_platform(comp_ctx))
         && !check_call_return(comp_ctx, func_ctx, res))
         goto fail;
+
+    if (comp_ctx->aot_frame && comp_ctx->call_stack_features.frame_per_function
+        && !aot_free_frame_per_function_frame_for_aot_func(comp_ctx,
+                                                           func_ctx)) {
+        goto fail;
+    }
 
     block_curr = LLVMGetInsertBlock(comp_ctx->builder);
     for (i = 0; i < func_result_count; i++) {
@@ -2538,6 +2702,7 @@ aot_compile_op_call_indirect(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
                 aot_set_last_error("llvm build load failed.");
                 goto fail;
             }
+            LLVMSetAlignment(ext_ret, 4);
             LLVMAddIncoming(result_phis[i], &ext_ret, &block_curr, 1);
         }
     }
@@ -2554,7 +2719,8 @@ aot_compile_op_call_indirect(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
         PUSH(result_phis[i], func_type->types[func_param_count + i]);
     }
 
-    if (comp_ctx->enable_aux_stack_frame) {
+    if (comp_ctx->aux_stack_frame_type
+        && !comp_ctx->call_stack_features.frame_per_function) {
 #if WASM_ENABLE_AOT_STACK_FRAME != 0
         if (!free_frame_for_aot_func(comp_ctx, func_ctx))
             goto fail;
@@ -2861,7 +3027,8 @@ aot_compile_op_call_ref(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
         goto fail;
     }
 
-    if (comp_ctx->enable_aux_stack_frame) {
+    if (comp_ctx->aux_stack_frame_type
+        && !comp_ctx->call_stack_features.frame_per_function) {
 #if WASM_ENABLE_AOT_STACK_FRAME != 0
         /*  TODO: use current frame instead of allocating new frame
                   for WASM_OP_RETURN_CALL_REF */
@@ -2930,7 +3097,7 @@ aot_compile_op_call_ref(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
     /* Translate call import block */
     LLVMPositionBuilderAtEnd(comp_ctx->builder, block_call_import);
 
-    if (comp_ctx->enable_aux_stack_frame
+    if (comp_ctx->aux_stack_frame_type == AOT_STACK_FRAME_TYPE_STANDARD
         && !commit_params_to_frame_of_import_func(comp_ctx, func_ctx, func_type,
                                                   param_values + 1)) {
         goto fail;
@@ -2967,6 +3134,7 @@ aot_compile_op_call_ref(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
                 aot_set_last_error("llvm build load failed.");
                 goto fail;
             }
+            LLVMSetAlignment(ext_ret, 4);
             LLVMAddIncoming(result_phis[i], &ext_ret, &block_curr, 1);
         }
     }
@@ -3042,6 +3210,7 @@ aot_compile_op_call_ref(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
                 aot_set_last_error("llvm build load failed.");
                 goto fail;
             }
+            LLVMSetAlignment(ext_ret, 4);
             LLVMAddIncoming(result_phis[i], &ext_ret, &block_curr, 1);
         }
     }
@@ -3058,7 +3227,8 @@ aot_compile_op_call_ref(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
         PUSH(result_phis[i], func_type->types[func_param_count + i]);
     }
 
-    if (comp_ctx->enable_aux_stack_frame) {
+    if (comp_ctx->aux_stack_frame_type
+        && !comp_ctx->call_stack_features.frame_per_function) {
 #if WASM_ENABLE_AOT_STACK_FRAME != 0
         if (!free_frame_for_aot_func(comp_ctx, func_ctx))
             goto fail;

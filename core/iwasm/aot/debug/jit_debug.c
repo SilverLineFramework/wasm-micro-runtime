@@ -24,7 +24,6 @@
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <string.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -56,6 +55,12 @@ typedef struct JITDescriptor {
     JITCodeEntry *first_entry_;
 } JITDescriptor;
 
+#if defined(_WIN32) || defined(_WIN32_)
+#define attribute_noinline __declspec(noinline)
+#else
+#define attribute_noinline __attribute__((noinline))
+#endif
+
 /* LLVM has already define this */
 #if (WASM_ENABLE_WAMR_COMPILER == 0) && (WASM_ENABLE_JIT == 0)
 /**
@@ -63,9 +68,11 @@ typedef struct JITDescriptor {
  * To prevent GCC from inlining or removing it we place noinline attribute
  * and inline assembler statement inside.
  */
-void __attribute__((noinline)) __jit_debug_register_code();
+void attribute_noinline
+__jit_debug_register_code(void);
 
-void __attribute__((noinline)) __jit_debug_register_code()
+void attribute_noinline
+__jit_debug_register_code(void)
 {
     int x;
     *(char *)&x = '\0';
@@ -89,7 +96,7 @@ extern JITDescriptor __jit_debug_descriptor;
  * This gives the debugger an easy way to inject custom code to
  * handle the events.
  */
-void (*__jit_debug_register_code_ptr)() = __jit_debug_register_code;
+void (*__jit_debug_register_code_ptr)(void) = __jit_debug_register_code;
 
 #ifdef __cplusplus
 }
@@ -164,7 +171,7 @@ DestroyJITCodeEntryInternal(JITCodeEntry *entry)
 }
 
 bool
-jit_debug_engine_init()
+jit_debug_engine_init(void)
 {
     if (jit_debug_engine) {
         return true;
@@ -187,7 +194,7 @@ jit_debug_engine_init()
 }
 
 void
-jit_debug_engine_destroy()
+jit_debug_engine_destroy(void)
 {
     if (jit_debug_engine) {
         WASMJITEntryNode *node, *node_next;

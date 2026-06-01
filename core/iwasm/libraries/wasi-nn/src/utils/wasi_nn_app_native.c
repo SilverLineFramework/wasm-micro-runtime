@@ -5,7 +5,7 @@
 
 #include "wasi_nn_app_native.h"
 
-static error
+static wasi_nn_error
 graph_builder_app_native(wasm_module_inst_t instance,
                          graph_builder_wasm *builder_wasm,
                          graph_builder *builder)
@@ -27,12 +27,12 @@ graph_builder_app_native(wasm_module_inst_t instance,
  * builder_array_wasm is consisted of {builder_wasm, size}
  */
 #if WASM_ENABLE_WASI_EPHEMERAL_NN != 0
-error
+wasi_nn_error
 graph_builder_array_app_native(wasm_module_inst_t instance,
                                graph_builder_wasm *builder_wasm, uint32_t size,
                                graph_builder_array *builder_array)
 #else  /* WASM_ENABLE_WASI_EPHEMERAL_NN == 0 */
-error
+wasi_nn_error
 graph_builder_array_app_native(wasm_module_inst_t instance,
                                graph_builder_array_wasm *builder_array_wasm,
                                graph_builder_array *builder_array)
@@ -76,10 +76,10 @@ graph_builder_array_app_native(wasm_module_inst_t instance,
     graph_builder *builder = (graph_builder *)wasm_runtime_malloc(
         array_size * sizeof(graph_builder));
     if (builder == NULL)
-        return missing_memory;
+        return too_large;
 
     for (uint32_t i = 0; i < array_size; ++i) {
-        error res;
+        wasi_nn_error res;
         if (success
             != (res = graph_builder_app_native(instance, &builder_wasm[i],
                                                &builder[i]))) {
@@ -88,7 +88,7 @@ graph_builder_array_app_native(wasm_module_inst_t instance,
         }
 
         NN_DBG_PRINTF("Graph builder %d contains %d elements", i,
-                      builder->size);
+                      builder[i].size);
     }
 
     builder_array->buf = builder;
@@ -97,9 +97,10 @@ graph_builder_array_app_native(wasm_module_inst_t instance,
 #undef array_size
 }
 
-static error
+static wasi_nn_error
 tensor_data_app_native(wasm_module_inst_t instance, uint32_t total_elements,
-                       tensor_wasm *input_tensor_wasm, tensor_data *data)
+                       tensor_wasm *input_tensor_wasm, void **data,
+                       uint32_t *size)
 {
 #if WASM_ENABLE_WASI_EPHEMERAL_NN != 0
 #define data_size input_tensor_wasm->data_size
@@ -107,19 +108,29 @@ tensor_data_app_native(wasm_module_inst_t instance, uint32_t total_elements,
 #define data_size total_elements
 #endif
 
+    uint64 data_size_in_bytes = data_size;
+#if WASM_ENABLE_WASI_EPHEMERAL_NN == 0
+    data_size_in_bytes *= sizeof(float);
+    if (data_size_in_bytes / sizeof(float) != data_size) {
+        /* overflow */
+        return invalid_argument;
+    }
+#endif
+
     if (!wasm_runtime_validate_app_addr(instance,
                                         (uint64)input_tensor_wasm->data_offset,
-                                        (uint64)data_size)) {
+                                        data_size_in_bytes)) {
         NN_ERR_PRINTF("input_tensor_wasm->data_offset is invalid");
         return invalid_argument;
     }
-    *data = (tensor_data)wasm_runtime_addr_app_to_native(
+    *data = wasm_runtime_addr_app_to_native(
         instance, (uint64)input_tensor_wasm->data_offset);
+    *size = data_size;
     return success;
 #undef data_size
 }
 
-static error
+static wasi_nn_error
 tensor_dimensions_app_native(wasm_module_inst_t instance,
                              tensor_wasm *input_tensor_wasm,
                              tensor_dimensions **dimensions)
@@ -149,7 +160,7 @@ tensor_dimensions_app_native(wasm_module_inst_t instance,
     *dimensions =
         (tensor_dimensions *)wasm_runtime_malloc(sizeof(tensor_dimensions));
     if (dimensions == NULL)
-        return missing_memory;
+        return too_large;
 
     (*dimensions)->size = dimensions_wasm->size;
     (*dimensions)->buf = (uint32_t *)wasm_runtime_addr_app_to_native(
@@ -159,7 +170,7 @@ tensor_dimensions_app_native(wasm_module_inst_t instance,
     return success;
 }
 
-error
+wasi_nn_error
 tensor_app_native(wasm_module_inst_t instance, tensor_wasm *input_tensor_wasm,
                   tensor *input_tensor)
 {
@@ -170,7 +181,7 @@ tensor_app_native(wasm_module_inst_t instance, tensor_wasm *input_tensor_wasm,
         return invalid_argument;
     }
 
-    error res;
+    wasi_nn_error res;
 
     tensor_dimensions *dimensions = NULL;
     if (success
@@ -188,16 +199,19 @@ tensor_app_native(wasm_module_inst_t instance, tensor_wasm *input_tensor_wasm,
     NN_DBG_PRINTF("Tensor type: %d", input_tensor_wasm->type);
     NN_DBG_PRINTF("Total number of elements: %d", total_elements);
 
-    tensor_data data = NULL;
+    void *data = NULL;
+    uint32_t datasize;
     if (success
-        != (res = tensor_data_app_native(instance, total_elements,
-                                         input_tensor_wasm, &data))) {
+        != (res =
+                tensor_data_app_native(instance, total_elements,
+                                       input_tensor_wasm, &data, &datasize))) {
         wasm_runtime_free(dimensions);
         return res;
     }
 
     input_tensor->type = input_tensor_wasm->type;
     input_tensor->dimensions = dimensions;
-    input_tensor->data = data;
+    input_tensor->data.buf = data;
+    input_tensor->data.size = datasize;
     return success;
 }

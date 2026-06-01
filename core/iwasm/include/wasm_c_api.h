@@ -1,5 +1,11 @@
 // WebAssembly C API
 
+/**
+ * @file   wasm_c_api.h
+ *
+ * @brief  This file defines the WebAssembly C APIs
+ */
+
 #ifndef _WASM_C_API_H_
 #define _WASM_C_API_H_
 
@@ -16,6 +22,8 @@
 #else
 #define WASM_API_EXTERN __declspec(dllimport)
 #endif
+#elif defined(__GNUC__) || defined(__clang__)
+#define WASM_API_EXTERN __attribute__((visibility("default")))
 #else
 #define WASM_API_EXTERN
 #endif
@@ -40,7 +48,7 @@ extern "C" {
 // Auxiliaries
 
 // Machine types
-#if (__STDC_VERSION__) > 199901L
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__) > 199901L
 inline void assertions(void) {
   static_assert(sizeof(float) == sizeof(uint32_t), "incompatible float type");
   static_assert(sizeof(double) == sizeof(uint64_t), "incompatible double type");
@@ -90,7 +98,7 @@ typedef double float64_t;
 // Vectors
 // size: capacity
 // num_elems: current number of elements
-// size_of_elem: size of one elemen
+// size_of_elem: size of one element
 #define WASM_DECLARE_VEC(name, ptr_or_none) \
   typedef struct wasm_##name##_vec_t { \
     size_t size; \
@@ -177,7 +185,7 @@ typedef union MemAllocOption {
 } MemAllocOption;
 #endif /* MEM_ALLOC_OPTION_DEFINED */
 
-/* Runtime configration */
+/* Runtime configuration */
 struct wasm_config_t {
     mem_alloc_type_t mem_alloc_type;
     MemAllocOption mem_alloc_option;
@@ -291,7 +299,8 @@ enum wasm_valkind_enum {
   WASM_I64,
   WASM_F32,
   WASM_F64,
-  WASM_ANYREF = 128,
+  WASM_V128,
+  WASM_EXTERNREF = 128,
   WASM_FUNCREF,
 };
 #endif
@@ -301,10 +310,10 @@ WASM_API_EXTERN own wasm_valtype_t* wasm_valtype_new(wasm_valkind_t);
 WASM_API_EXTERN wasm_valkind_t wasm_valtype_kind(const wasm_valtype_t*);
 
 static inline bool wasm_valkind_is_num(wasm_valkind_t k) {
-  return k < WASM_ANYREF;
+  return k < WASM_EXTERNREF;
 }
 static inline bool wasm_valkind_is_ref(wasm_valkind_t k) {
-  return k >= WASM_ANYREF;
+  return k >= WASM_EXTERNREF;
 }
 
 static inline bool wasm_valtype_is_num(const wasm_valtype_t* t) {
@@ -427,7 +436,7 @@ struct wasm_ref_t;
 
 typedef struct wasm_val_t {
   wasm_valkind_t kind;
-  uint8_t __paddings[7];
+  uint8_t _paddings[7];
   union {
     int32_t i32;
     int64_t i64;
@@ -517,9 +526,30 @@ struct WASMModuleCommon;
 typedef struct WASMModuleCommon *wasm_module_t;
 #endif
 
+#ifndef LOAD_ARGS_OPTION_DEFINED
+#define LOAD_ARGS_OPTION_DEFINED
+typedef struct LoadArgs {
+    char *name;
+    /* True by default, used by wasm-c-api only.
+    If false, the wasm input buffer (wasm_byte_vec_t) is referenced by the
+    module instead of being cloned. Hence, it can be freed after module loading. */
+    bool clone_wasm_binary;
+    /* This option is only used by the AOT/wasm loader (see wasm_export.h) */
+    bool wasm_binary_freeable;
+    /* false by default, if true, don't resolve the symbols yet. The
+       wasm_runtime_load_ex has to be followed by a wasm_runtime_resolve_symbols
+       call */
+    bool no_resolve;
+    /* TODO: more fields? */
+} LoadArgs;
+#endif /* LOAD_ARGS_OPTION_DEFINED */
 
 WASM_API_EXTERN own wasm_module_t* wasm_module_new(
   wasm_store_t*, const wasm_byte_vec_t* binary);
+
+// please refer to wasm_runtime_load_ex(...) in core/iwasm/include/wasm_export.h
+WASM_API_EXTERN own wasm_module_t* wasm_module_new_ex(
+  wasm_store_t*, wasm_byte_vec_t* binary, LoadArgs *args);
 
 WASM_API_EXTERN void wasm_module_delete(own wasm_module_t*);
 
@@ -538,6 +568,8 @@ WASM_API_EXTERN void wasm_shared_module_delete(own wasm_shared_module_t*);
 
 WASM_API_EXTERN bool wasm_module_set_name(wasm_module_t*, const char* name);
 WASM_API_EXTERN const char *wasm_module_get_name(wasm_module_t*);
+
+WASM_API_EXTERN bool wasm_module_is_underlying_binary_freeable(const wasm_module_t *module);
 
 
 // Function Instances
@@ -665,6 +697,11 @@ WASM_API_EXTERN own wasm_instance_t* wasm_instance_new_with_args_ex(
 
 WASM_API_EXTERN void wasm_instance_exports(const wasm_instance_t*, own wasm_extern_vec_t* out);
 
+// Return total wasm functions' execution time in ms
+WASM_API_EXTERN double wasm_instance_sum_wasm_exec_time(const wasm_instance_t*);
+// Return execution time in ms of a given wasm function with
+// func_name. If the function is not found, return 0.
+WASM_API_EXTERN double wasm_instance_get_wasm_func_exec_time(const wasm_instance_t*, const char *);
 
 ///////////////////////////////////////////////////////////////////////////////
 // Convenience
@@ -689,9 +726,12 @@ static inline own wasm_valtype_t* wasm_valtype_new_f32(void) {
 static inline own wasm_valtype_t* wasm_valtype_new_f64(void) {
   return wasm_valtype_new(WASM_F64);
 }
+static inline own wasm_valtype_t* wasm_valtype_new_v128(void) {
+  return wasm_valtype_new(WASM_V128);
+}
 
 static inline own wasm_valtype_t* wasm_valtype_new_anyref(void) {
-  return wasm_valtype_new(WASM_ANYREF);
+  return wasm_valtype_new(WASM_EXTERNREF);
 }
 static inline own wasm_valtype_t* wasm_valtype_new_funcref(void) {
   return wasm_valtype_new(WASM_FUNCREF);
@@ -847,12 +887,12 @@ static inline void* wasm_val_ptr(const wasm_val_t* val) {
 #endif
 }
 
-#define WASM_I32_VAL(i) {.kind = WASM_I32, .__paddings = {0}, .of = {.i32 = i}}
-#define WASM_I64_VAL(i) {.kind = WASM_I64, .__paddings = {0}, .of = {.i64 = i}}
-#define WASM_F32_VAL(z) {.kind = WASM_F32, .__paddings = {0}, .of = {.f32 = z}}
-#define WASM_F64_VAL(z) {.kind = WASM_F64, .__paddings = {0}, .of = {.f64 = z}}
-#define WASM_REF_VAL(r) {.kind = WASM_ANYREF, .__paddings = {0}, .of = {.ref = r}}
-#define WASM_INIT_VAL {.kind = WASM_ANYREF, .__paddings = {0}, .of = {.ref = NULL}}
+#define WASM_I32_VAL(i) {.kind = WASM_I32, ._paddings = {0}, .of = {.i32 = i}}
+#define WASM_I64_VAL(i) {.kind = WASM_I64, ._paddings = {0}, .of = {.i64 = i}}
+#define WASM_F32_VAL(z) {.kind = WASM_F32, ._paddings = {0}, .of = {.f32 = z}}
+#define WASM_F64_VAL(z) {.kind = WASM_F64, ._paddings = {0}, .of = {.f64 = z}}
+#define WASM_REF_VAL(r) {.kind = WASM_EXTERNREF, ._paddings = {0}, .of = {.ref = r}}
+#define WASM_INIT_VAL {.kind = WASM_EXTERNREF, ._paddings = {0}, .of = {.ref = NULL}}
 
 #define KILOBYTE(n) ((n) * 1024)
 

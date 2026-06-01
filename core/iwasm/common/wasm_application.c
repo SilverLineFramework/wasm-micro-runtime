@@ -64,7 +64,7 @@ static union {
  * Implementation of wasm_application_execute_main()
  */
 static bool
-check_main_func_type(const WASMFuncType *type)
+check_main_func_type(const WASMFuncType *type, bool is_memory64)
 {
     if (!(type->param_count == 0 || type->param_count == 2)
         || type->result_count > 1) {
@@ -75,7 +75,8 @@ check_main_func_type(const WASMFuncType *type)
 
     if (type->param_count == 2
         && !(type->types[0] == VALUE_TYPE_I32
-             && type->types[1] == VALUE_TYPE_I32)) {
+             && type->types[1]
+                    == (is_memory64 ? VALUE_TYPE_I64 : VALUE_TYPE_I32))) {
         LOG_ERROR(
             "WASM execute application failed: invalid main function type.\n");
         return false;
@@ -97,14 +98,19 @@ execute_main(WASMModuleInstanceCommon *module_inst, int32 argc, char *argv[])
     WASMFunctionInstanceCommon *func;
     WASMFuncType *func_type = NULL;
     WASMExecEnv *exec_env = NULL;
-    uint32 argc1 = 0, argv1[2] = { 0 };
+    uint32 argc1 = 0, argv1[3] = { 0 };
     uint32 total_argv_size = 0;
     uint64 total_size;
     uint64 argv_buf_offset = 0;
     int32 i;
     char *argv_buf, *p, *p_end;
     uint32 *argv_offsets, module_type;
-    bool ret, is_import_func = true;
+    bool ret, is_import_func = true, is_memory64 = false;
+#if WASM_ENABLE_MEMORY64 != 0
+    WASMModuleInstance *wasm_module_inst = (WASMModuleInstance *)module_inst;
+    if (wasm_module_inst->memory_count > 0)
+        is_memory64 = wasm_module_inst->memories[0]->is_memory64;
+#endif
 
     exec_env = wasm_runtime_get_exec_env_singleton(module_inst);
     if (!exec_env) {
@@ -115,7 +121,7 @@ execute_main(WASMModuleInstanceCommon *module_inst, int32 argc, char *argv[])
 
 #if WASM_ENABLE_LIBC_WASI != 0 || WASM_ENABLE_LIBC_WALI != 0
     /* In wasi mode, we should call the function named "_start"
-       which initializes the wasi envrionment and then calls
+       which initializes the wasi environment and then calls
        the actual main function. Directly calling main function
        may cause exception thrown. */
     if ((func = wasm_runtime_lookup_wasi_start_function(module_inst))) {
@@ -126,7 +132,7 @@ execute_main(WASMModuleInstanceCommon *module_inst, int32 argc, char *argv[])
 #if WASM_ENABLE_THREAD_MGR != 0
         if (ret) {
             /* On a successful return from the `_start` function,
-               we terminate other threads by mimicing wasi:proc_exit(0).
+               we terminate other threads by mimicking wasi:proc_exit(0).
 
                Note:
                - A return from the `main` function is an equivalent of
@@ -197,7 +203,7 @@ execute_main(WASMModuleInstanceCommon *module_inst, int32 argc, char *argv[])
         return false;
     }
 
-    if (!check_main_func_type(func_type)) {
+    if (!check_main_func_type(func_type, is_memory64)) {
         wasm_runtime_set_exception(module_inst,
                                    "invalid function type of main function");
         return false;
@@ -206,9 +212,23 @@ execute_main(WASMModuleInstanceCommon *module_inst, int32 argc, char *argv[])
     if (func_type->param_count) {
         for (i = 0; i < argc; i++)
             total_argv_size += (uint32)(strlen(argv[i]) + 1);
-        total_argv_size = align_uint(total_argv_size, 4);
+#if WASM_ENABLE_MEMORY64 != 0
+        if (is_memory64)
+            /* `char **argv` is an array of 64-bit elements in memory64 */
+            total_argv_size = align_uint(total_argv_size, 8);
+        else
+#endif
+            total_argv_size = align_uint(total_argv_size, 4);
 
-        total_size = (uint64)total_argv_size + sizeof(int32) * (uint64)argc;
+#if WASM_ENABLE_MEMORY64 != 0
+        if (is_memory64)
+            /* `char **argv` is an array of 64-bit elements in memory64 */
+            total_size =
+                (uint64)total_argv_size + sizeof(uint64) * (uint64)argc;
+        else
+#endif
+            total_size =
+                (uint64)total_argv_size + sizeof(uint32) * (uint64)argc;
 
         if (total_size >= UINT32_MAX
             || !(argv_buf_offset = wasm_runtime_module_malloc(
@@ -224,15 +244,33 @@ execute_main(WASMModuleInstanceCommon *module_inst, int32 argc, char *argv[])
         for (i = 0; i < argc; i++) {
             bh_memcpy_s(p, (uint32)(p_end - p), argv[i],
                         (uint32)(strlen(argv[i]) + 1));
-            argv_offsets[i] = (uint32)argv_buf_offset + (uint32)(p - argv_buf);
+#if WASM_ENABLE_MEMORY64 != 0
+            if (is_memory64)
+                /* `char **argv` is an array of 64-bit elements in memory64 */
+                ((uint64 *)argv_offsets)[i] =
+                    (uint32)argv_buf_offset + (uint32)(p - argv_buf);
+            else
+#endif
+                argv_offsets[i] =
+                    (uint32)argv_buf_offset + (uint32)(p - argv_buf);
             p += strlen(argv[i]) + 1;
         }
 
-        argc1 = 2;
         argv1[0] = (uint32)argc;
-        /* TODO: memory64 uint64 when the memory idx is i64 */
-        argv1[1] =
-            (uint32)wasm_runtime_addr_native_to_app(module_inst, argv_offsets);
+#if WASM_ENABLE_MEMORY64 != 0
+        if (is_memory64) {
+            argc1 = 3;
+            uint64 app_addr =
+                wasm_runtime_addr_native_to_app(module_inst, argv_offsets);
+            PUT_I64_TO_ADDR(&argv[1], app_addr);
+        }
+        else
+#endif
+        {
+            argc1 = 2;
+            argv1[1] = (uint32)wasm_runtime_addr_native_to_app(module_inst,
+                                                               argv_offsets);
+        }
     }
 
     ret = wasm_runtime_call_wasm(exec_env, func, argc1, argv1);
@@ -493,7 +531,7 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
                         bh_memcpy_s(&u.val, sizeof(double), &ud.d,
                                     sizeof(double));
                     }
-                    if (endptr[0] == ':') {
+                    if (endptr && endptr[0] == ':') {
                         uint64 sig;
                         union ieee754_double ud;
                         sig = strtoull(endptr + 1, &endptr, 0);
@@ -518,11 +556,11 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
             case VALUE_TYPE_V128:
             {
                 /* it likes 0x123\0x234 or 123\234 */
-                /* retrive first i64 */
+                /* retrieve first i64 */
                 *(uint64 *)(argv1 + p) = strtoull(argv[i], &endptr, 0);
                 /* skip \ */
                 endptr++;
-                /* retrive second i64 */
+                /* retrieve second i64 */
                 *(uint64 *)(argv1 + p + 2) = strtoull(endptr, &endptr, 0);
                 p += 4;
                 break;
@@ -580,8 +618,7 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
                         is_anyref = true;
                     }
 
-                    if (wasm_is_type_multi_byte_type(
-                            type->types[type->param_count + i])) {
+                    if (wasm_is_type_multi_byte_type(type->types[i])) {
                         WASMRefType *ref_type = ref_type_map->ref_type;
                         if (wasm_is_refheaptype_common(
                                 &ref_type->ref_ht_common)) {
@@ -692,7 +729,10 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
             }
             case VALUE_TYPE_F32:
             {
-                os_printf("%.7g:f32", *(float32 *)(argv1 + k));
+                // Explicit cast to double to avoid warning.
+                // Float arguments are promoted to double in variadic
+                // functions per section 6.5.2.2 of the C99 standard.
+                os_printf("%.7g:f32", (double)*(float32 *)(argv1 + k));
                 k++;
                 break;
             }

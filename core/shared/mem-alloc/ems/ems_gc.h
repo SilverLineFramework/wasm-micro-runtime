@@ -70,7 +70,10 @@ typedef enum {
     GC_STAT_MAX
 } GC_STAT_INDEX;
 
+#ifndef GC_FINALIZER_T_DEFINED
+#define GC_FINALIZER_T_DEFINED
 typedef void (*gc_finalizer_t)(void *obj, void *data);
+#endif
 
 #ifndef EXTRA_INFO_NORMAL_NODE_CNT
 #define EXTRA_INFO_NORMAL_NODE_CNT 32
@@ -112,7 +115,7 @@ gc_init_with_struct_and_pool(char *struct_buf, gc_size_t struct_buf_size,
                              char *pool_buf, gc_size_t pool_buf_size);
 
 /**
- * Destroy heap which is initilized from a buffer
+ * Destroy heap which is initialized from a buffer
  *
  * @param handle handle to heap needed destroy
  *
@@ -190,6 +193,9 @@ gc_alloc_vo(void *heap, gc_size_t size);
 gc_object_t
 gc_realloc_vo(void *heap, void *ptr, gc_size_t size);
 
+gc_object_t
+gc_alloc_vo_aligned(void *heap, gc_size_t size, gc_size_t alignment);
+
 int
 gc_free_vo(void *heap, gc_object_t obj);
 
@@ -210,6 +216,10 @@ gc_object_t
 gc_realloc_vo_internal(void *heap, void *ptr, gc_size_t size, const char *file,
                        int line);
 
+gc_object_t
+gc_alloc_vo_aligned_internal(void *heap, gc_size_t size, gc_size_t alignment,
+                             const char *file, int line);
+
 int
 gc_free_vo_internal(void *heap, gc_object_t obj, const char *file, int line);
 
@@ -227,6 +237,9 @@ gc_free_wo_internal(void *vheap, void *ptr, const char *file, int line);
 
 #define gc_realloc_vo(heap, ptr, size) \
     gc_realloc_vo_internal(heap, ptr, size, __FILE__, __LINE__)
+
+#define gc_alloc_vo_aligned(heap, size, alignment) \
+    gc_alloc_vo_aligned_internal(heap, size, alignment, __FILE__, __LINE__)
 
 #define gc_free_vo(heap, obj) \
     gc_free_vo_internal(heap, obj, __FILE__, __LINE__)
@@ -306,10 +319,10 @@ void
 wasm_runtime_set_wasm_object_extra_info_flag(gc_object_t obj, bool set);
 
 void
-wasm_runtime_gc_prepare();
+wasm_runtime_gc_prepare(void *exec_env);
 
 void
-wasm_runtime_gc_finalize();
+wasm_runtime_gc_finalize(void *exec_env);
 #endif /* end of WASM_ENABLE_GC != 0 */
 
 #define GC_HEAP_STAT_SIZE (128 / 4)

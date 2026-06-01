@@ -59,7 +59,7 @@ b_memcpy_wa(void *s1, unsigned int s1max, const void *s2, unsigned int n)
                 *dest++ = *p_byte_read++;
             }
         }
-        /* read meaning word(s) */
+        /* read remaining word(s) */
         else {
             if ((char *)p + 4 >= src + n) {
                 for (ps = (char *)p; ps < src + n; ps++) {
@@ -165,3 +165,63 @@ wa_strdup(const char *s)
     }
     return s1;
 }
+
+char *
+bh_strtok_r(char *str, const char *delim, char **saveptr)
+{
+#if !(defined(_WIN32) || defined(_WIN32_))
+    return strtok_r(str, delim, saveptr);
+#else
+    return strtok_s(str, delim, saveptr);
+#endif
+}
+
+#if WASM_ENABLE_WAMR_COMPILER != 0 || WASM_ENABLE_JIT != 0
+int
+bh_system(const char *cmd)
+{
+    int ret;
+
+#if !(defined(_WIN32) || defined(_WIN32_))
+    ret = system(cmd);
+#else
+    ret = _spawnlp(_P_WAIT, "cmd.exe", "/c", cmd, NULL);
+#endif
+
+    return ret;
+}
+
+#if defined(_WIN32) || defined(_WIN32_)
+errno_t
+_mktemp_s(char *nameTemplate, size_t sizeInChars);
+#endif
+
+bool
+bh_mkstemp(char *file_name, size_t name_len)
+{
+    int fd;
+
+#if !(defined(_WIN32) || defined(_WIN32_))
+    (void)name_len;
+    /* On Linux, it generates a unique temporary filename from template, creates
+     * and opens the file, and returns an open file descriptor for the file. */
+    if ((fd = mkstemp(file_name)) <= 0) {
+        goto fail;
+    }
+
+    /* close and remove temp file */
+    close(fd);
+    unlink(file_name);
+#else
+    /* On Windows, it generates a unique temporary file name but does not create
+     * or open the file */
+    if (_mktemp_s(file_name, name_len) != 0) {
+        goto fail;
+    }
+#endif
+
+    return true;
+fail:
+    return false;
+}
+#endif /* End of WASM_ENABLE_WAMR_COMPILER != 0 || WASM_ENABLE_JIT != 0 */

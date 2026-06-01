@@ -19,6 +19,8 @@
 #include "../common/libc_wasi.c"
 #endif
 
+#include "../common/wasm_proposal.c"
+
 #if BH_HAS_DLFCN
 #include <dlfcn.h>
 #endif
@@ -35,7 +37,7 @@ static char *app_env_file;
 
 /* clang-format off */
 static int
-print_help()
+print_help(void)
 {
     printf("Usage: iwasm [-options] wasm_file [args...]\n");
     printf("options:\n");
@@ -58,7 +60,15 @@ print_help()
     printf("  --multi-tier-jit         Run the wasm app with multi-tier jit mode\n");
 #endif
     printf("  --stack-size=n           Set maximum stack size in bytes, default is 64 KB\n");
-    printf("  --heap-size=n            Set maximum heap size in bytes, default is 16 KB\n");
+#if WASM_ENABLE_LIBC_WASI !=0
+    printf("  --heap-size=n            Set maximum heap size in bytes, default is 0 KB when libc wasi is enabled\n");
+#else
+    printf("  --heap-size=n            Set maximum heap size in bytes, default is 16 KB when libc wasi is diabled\n");
+#endif
+#if WASM_ENABLE_SHARED_HEAP != 0
+    printf("  --shared-heap-size=n     Create shared heap of n bytes and attach to the wasm app.\n");
+    printf("                           The size n will be adjusted to a minumum number aligned to page size\n");
+#endif
 #if WASM_ENABLE_FAST_JIT != 0
     printf("  --jit-codecache-size=n   Set fast jit maximum code cache size in bytes,\n");
     printf("                           default is %u KB\n", FAST_JIT_DEFAULT_CODE_CACHE_SIZE / 1024);
@@ -78,7 +88,7 @@ print_help()
     printf("                           Use comma to separate, e.g. --enable-segue=i32.load,i64.store\n");
     printf("                           and --enable-segue means all flags are added.\n");
 #endif
-#endif /* WASM_ENABLE_JIT != 0*/
+#endif /* WASM_ENABLE_JIT != 0 */
 #if WASM_ENABLE_LINUX_PERF != 0
     printf("  --enable-linux-perf      Enable linux perf support. It works in aot and llvm-jit.\n");
 #endif
@@ -305,7 +315,8 @@ load_native_lib(const char *name)
     /* open the native library */
     if (!(lib->handle = dlopen(name, RTLD_NOW | RTLD_GLOBAL))
         && !(lib->handle = dlopen(name, RTLD_LAZY))) {
-        LOG_WARNING("warning: failed to load native library %s", name);
+        LOG_WARNING("warning: failed to load native library %s. %s", name,
+                    dlerror());
         goto fail;
     }
 
@@ -403,7 +414,7 @@ unregister_and_unload_native_libs(uint32 native_lib_count,
 static char *
 handle_module_path(const char *module_path)
 {
-    /* next character after = */
+    /* next character after '=' */
     return (strchr(module_path, '=')) + 1;
 }
 
@@ -439,7 +450,7 @@ module_reader_callback(package_type_t module_type, const char *module_name,
 }
 
 static void
-moudle_destroyer(uint8 *buffer, uint32 size)
+module_destroyer_callback(uint8 *buffer, uint32 size)
 {
     if (!buffer) {
         return;
@@ -455,6 +466,9 @@ static char global_heap_buf[WASM_GLOBAL_HEAP_SIZE] = { 0 };
 #else
 static void *
 malloc_func(
+#if WASM_MEM_ALLOC_WITH_USAGE != 0
+    mem_alloc_usage_t usage,
+#endif
 #if WASM_MEM_ALLOC_WITH_USER_DATA != 0
     void *user_data,
 #endif
@@ -465,6 +479,9 @@ malloc_func(
 
 static void *
 realloc_func(
+#if WASM_MEM_ALLOC_WITH_USAGE != 0
+    mem_alloc_usage_t usage, bool full_size_mmaped,
+#endif
 #if WASM_MEM_ALLOC_WITH_USER_DATA != 0
     void *user_data,
 #endif
@@ -475,6 +492,9 @@ realloc_func(
 
 static void
 free_func(
+#if WASM_MEM_ALLOC_WITH_USAGE != 0
+    mem_alloc_usage_t usage,
+#endif
 #if WASM_MEM_ALLOC_WITH_USER_DATA != 0
     void *user_data,
 #endif
@@ -536,21 +556,23 @@ void *
 timeout_thread(void *vp)
 {
     const struct timeout_arg *arg = vp;
-    uint32 left = arg->timeout_ms;
+    const uint64 end_time =
+        os_time_get_boot_us() + (uint64)arg->timeout_ms * 1000;
     while (!arg->cancel) {
-        uint32 ms;
-        if (left >= 100) {
-            ms = 100;
-        }
-        else {
-            ms = left;
-        }
-        os_usleep((uint64)ms * 1000);
-        left -= ms;
-        if (left == 0) {
+        const uint64 now = os_time_get_boot_us();
+        if ((int64)(now - end_time) > 0) {
             wasm_runtime_terminate(arg->inst);
             break;
         }
+        const uint64 left_us = end_time - now;
+        uint32 us;
+        if (left_us >= 100 * 1000) {
+            us = 100 * 1000;
+        }
+        else {
+            us = left_us;
+        }
+        os_usleep(us);
     }
     return NULL;
 }
@@ -578,6 +600,11 @@ main(int argc, char *argv[])
 #else
     uint32 heap_size = 16 * 1024;
 #endif
+#if WASM_ENABLE_SHARED_HEAP != 0
+    SharedHeapInitArgs shared_heap_init_args;
+    uint32 shared_heap_size = 0;
+    void *shared_heap = NULL;
+#endif
 #if WASM_ENABLE_FAST_JIT != 0
     uint32 jit_code_cache_size = FAST_JIT_DEFAULT_CODE_CACHE_SIZE;
 #endif
@@ -596,6 +623,7 @@ main(int argc, char *argv[])
     wasm_module_inst_t wasm_module_inst = NULL;
     RunningMode running_mode = 0;
     RuntimeInitArgs init_args;
+    struct InstantiationArgs2 *inst_args;
     char error_buf[128] = { 0 };
 #if WASM_ENABLE_LOG != 0
     int log_verbose_level = 2;
@@ -684,6 +712,13 @@ main(int argc, char *argv[])
                 return print_help();
             heap_size = atoi(argv[0] + 12);
         }
+#if WASM_ENABLE_SHARED_HEAP != 0
+        else if (!strncmp(argv[0], "--shared-heap-size=", 19)) {
+            if (argv[0][19] == '\0')
+                return print_help();
+            shared_heap_size = atoi(argv[0] + 19);
+        }
+#endif
 #if WASM_ENABLE_FAST_JIT != 0
         else if (!strncmp(argv[0], "--jit-codecache-size=", 21)) {
             if (argv[0][21] == '\0')
@@ -693,7 +728,7 @@ main(int argc, char *argv[])
 #endif
 #if WASM_ENABLE_GC != 0
         else if (!strncmp(argv[0], "--gc-heap-size=", 15)) {
-            if (argv[0][21] == '\0')
+            if (argv[0][15] == '\0')
                 return print_help();
             gc_heap_size = atoi(argv[0] + 15);
         }
@@ -812,6 +847,8 @@ main(int argc, char *argv[])
             wasm_runtime_get_version(&major, &minor, &patch);
             printf("iwasm %" PRIu32 ".%" PRIu32 ".%" PRIu32 "\n", major, minor,
                    patch);
+            printf("\n");
+            wasm_proposal_print_status();
             return 0;
         }
 
@@ -899,7 +936,8 @@ main(int argc, char *argv[])
 #if WASM_ENABLE_DEBUG_INTERP != 0
     init_args.instance_port = instance_port;
     if (ip_addr)
-        strcpy(init_args.ip_addr, ip_addr);
+        /* ensure that init_args.ip_addr is null terminated */
+        strncpy(init_args.ip_addr, ip_addr, sizeof(init_args.ip_addr) - 1);
 #endif
 
     /* initialize runtime environment */
@@ -925,6 +963,7 @@ main(int argc, char *argv[])
 #if WASM_ENABLE_AOT != 0
     if (wasm_runtime_is_xip_file(wasm_file_buf, wasm_file_size)) {
         uint8 *wasm_file_mapped;
+        uint8 *daddr;
         int map_prot = MMAP_PROT_READ | MMAP_PROT_WRITE | MMAP_PROT_EXEC;
         int map_flags = MMAP_MAP_32BIT;
 
@@ -935,8 +974,15 @@ main(int argc, char *argv[])
             goto fail1;
         }
 
-        bh_memcpy_s(wasm_file_mapped, wasm_file_size, wasm_file_buf,
-                    wasm_file_size);
+#if (WASM_MEM_DUAL_BUS_MIRROR != 0)
+        daddr = os_get_dbus_mirror(wasm_file_mapped);
+#else
+        daddr = wasm_file_mapped;
+#endif
+        bh_memcpy_s(daddr, wasm_file_size, wasm_file_buf, wasm_file_size);
+#if (WASM_MEM_DUAL_BUS_MIRROR != 0)
+        os_dcache_flush();
+#endif
         wasm_runtime_free(wasm_file_buf);
         wasm_file_buf = wasm_file_mapped;
         is_xip_file = true;
@@ -944,7 +990,8 @@ main(int argc, char *argv[])
 #endif
 
 #if WASM_ENABLE_MULTI_MODULE != 0
-    wasm_runtime_set_module_reader(module_reader_callback, moudle_destroyer);
+    wasm_runtime_set_module_reader(module_reader_callback,
+                                   module_destroyer_callback);
 #endif
 
     /* load WASM module */
@@ -954,14 +1001,32 @@ main(int argc, char *argv[])
         goto fail2;
     }
 
+#if WASM_ENABLE_DYNAMIC_AOT_DEBUG != 0
+    if (!wasm_runtime_set_module_name(wasm_module, wasm_file, error_buf,
+                                      sizeof(error_buf))) {
+        printf("set aot module name failed in dynamic aot debug mode, %s\n",
+               error_buf);
+        goto fail3;
+    }
+#endif
+
+    if (!wasm_runtime_instantiation_args_create(&inst_args)) {
+        printf("failed to create instantiate args\n");
+        goto fail3;
+    }
+    wasm_runtime_instantiation_args_set_default_stack_size(inst_args,
+                                                           stack_size);
+    wasm_runtime_instantiation_args_set_host_managed_heap_size(inst_args,
+                                                               heap_size);
 #if WASM_ENABLE_LIBC_WASI != 0
-    libc_wasi_init(wasm_module, argc, argv, &wasi_parse_ctx);
+    libc_wasi_set_init_args(inst_args, argc, argv, &wasi_parse_ctx);
 #endif
 
     /* instantiate the module */
-    if (!(wasm_module_inst =
-              wasm_runtime_instantiate(wasm_module, stack_size, heap_size,
-                                       error_buf, sizeof(error_buf)))) {
+    wasm_module_inst = wasm_runtime_instantiate_ex2(
+        wasm_module, inst_args, error_buf, sizeof(error_buf));
+    wasm_runtime_instantiation_args_destroy(inst_args);
+    if (!wasm_module_inst) {
         printf("%s\n", error_buf);
         goto fail3;
     }
@@ -1001,6 +1066,25 @@ main(int argc, char *argv[])
         if (ret != 0) {
             printf("Failed to start timeout\n");
             goto fail5;
+        }
+    }
+#endif
+
+#if WASM_ENABLE_SHARED_HEAP != 0
+    if (shared_heap_size > 0) {
+        memset(&shared_heap_init_args, 0, sizeof(shared_heap_init_args));
+        shared_heap_init_args.size = shared_heap_size;
+        shared_heap = wasm_runtime_create_shared_heap(&shared_heap_init_args);
+
+        if (!shared_heap) {
+            printf("Create preallocated shared heap failed\n");
+            goto fail6;
+        }
+
+        /* attach module instance to the shared heap */
+        if (!wasm_runtime_attach_shared_heap(wasm_module_inst, shared_heap)) {
+            printf("Attach shared heap failed.\n");
+            goto fail6;
         }
     }
 #endif
@@ -1052,6 +1136,9 @@ main(int argc, char *argv[])
     }
 #endif
 
+#if WASM_ENABLE_SHARED_HEAP != 0
+fail6:
+#endif
 #if WASM_ENABLE_THREAD_MGR != 0
 fail5:
 #endif

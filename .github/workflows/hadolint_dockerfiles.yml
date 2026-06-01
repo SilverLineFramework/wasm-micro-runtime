@@ -28,13 +28,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   run-hadolint-on-dockerfiles:
     runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
 
       # on default, hadolint will fail on warnings and errors
       - name: Run hadolint on dockerfiles

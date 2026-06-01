@@ -3,6 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  */
 
+/**
+ * @file   gc_export.h
+ *
+ * @brief  This file defines the exported GC APIs
+ */
+
 #ifndef _GC_EXPORT_H
 #define _GC_EXPORT_H
 
@@ -45,16 +51,21 @@ typedef enum wasm_value_type_enum {
 typedef int32_t wasm_heap_type_t;
 
 typedef enum wasm_heap_type_enum {
+    HEAP_TYPE_NOFUNC = -0x0D,
+    HEAP_TYPE_NOEXTERN = -0x0E,
+    HEAP_TYPE_NONE = -0x0F,
     HEAP_TYPE_FUNC = -0x10,
     HEAP_TYPE_EXTERN = -0x11,
     HEAP_TYPE_ANY = -0x12,
     HEAP_TYPE_EQ = -0x13,
-    HEAP_TYPE_I31 = -0x16,
-    HEAP_TYPE_NOFUNC = -0x17,
-    HEAP_TYPE_NOEXTERN = -0x18,
-    HEAP_TYPE_STRUCT = -0x19,
-    HEAP_TYPE_ARRAY = -0x1A,
-    HEAP_TYPE_NONE = -0x1B
+    HEAP_TYPE_I31 = -0x14,
+    HEAP_TYPE_STRUCT = -0x15,
+    HEAP_TYPE_ARRAY = -0x16,
+    /* Stringref Types */
+    HEAP_TYPE_STRINGREF = -0x19,
+    HEAP_TYPE_STRINGVIEWWTF8 = -0x1A,
+    HEAP_TYPE_STRINGVIEWWTF16 = -0x1E,
+    HEAP_TYPE_STRINGVIEWITER = -0x1F
 } wasm_heap_type_enum;
 
 struct WASMObject;
@@ -65,7 +76,7 @@ typedef struct WASMObject *wasm_obj_t;
 typedef union V128 {
     int8_t i8x16[16];
     int16_t i16x8[8];
-    int32_t i32x8[4];
+    int32_t i32x4[4];
     int64_t i64x2[2];
     float f32x4[4];
     double f64x2[2];
@@ -225,16 +236,6 @@ WASM_RUNTIME_API_EXTERN bool
 wasm_defined_type_is_array_type(const wasm_defined_type_t def_type);
 
 /**
- * Get parameter count of a function type
- *
- * @param func_type the specified function type
- *
- * @return the param count of the specified function type
- */
-WASM_RUNTIME_API_EXTERN uint32_t
-wasm_func_type_get_param_count(const wasm_func_type_t func_type);
-
-/**
  * Get type of a specified parameter of a function type
  *
  * @param func_type the specified function type
@@ -246,16 +247,6 @@ wasm_func_type_get_param_count(const wasm_func_type_t func_type);
 WASM_RUNTIME_API_EXTERN wasm_ref_type_t
 wasm_func_type_get_param_type(const wasm_func_type_t func_type,
                               uint32_t param_idx);
-
-/**
- * Get result count of a function type
- *
- * @param func_type the specified function type
- *
- * @return the result count of the specified function type
- */
-WASM_RUNTIME_API_EXTERN uint32_t
-wasm_func_type_get_result_count(const wasm_func_type_t func_type);
 
 /**
  * Get type of a specified result of a function type
@@ -721,7 +712,7 @@ wasm_externref_obj_to_internal_obj(const wasm_externref_obj_t externref_obj);
  * @param exec_env the execution environment
  * @param internal_obj the internal object
  *
- * @return wasm_externref_obj_t if create success, NULL othersise
+ * @return wasm_externref_obj_t if create success, NULL otherwise
  */
 WASM_RUNTIME_API_EXTERN wasm_externref_obj_t
 wasm_internal_obj_to_externref_obj(wasm_exec_env_t exec_env,
@@ -771,7 +762,7 @@ WASM_RUNTIME_API_EXTERN bool
 wasm_runtime_unpin_object(wasm_exec_env_t exec_env, wasm_obj_t obj);
 
 /**
- * Check whether an object is a struct objectc
+ * Check whether an object is a struct object
  *
  * @param obj the object to check
  *

@@ -46,6 +46,10 @@ typedef WASMStructType AOTStructType;
 typedef WASMArrayType AOTArrayType;
 #endif
 typedef WASMExport AOTExport;
+typedef WASMMemory AOTMemory;
+typedef WASMMemoryType AOTMemoryType;
+typedef WASMTableType AOTTableType;
+typedef WASMTable AOTTable;
 
 #if WASM_ENABLE_DEBUG_AOT != 0
 typedef void *dwarf_extractor_handle_t;
@@ -81,22 +85,8 @@ typedef enum AOTFloatCond {
 typedef struct AOTImportMemory {
     char *module_name;
     char *memory_name;
-    uint32 memory_flags;
-    uint32 num_bytes_per_page;
-    uint32 mem_init_page_count;
-    uint32 mem_max_page_count;
+    AOTMemoryType mem_type;
 } AOTImportMemory;
-
-/**
- * Memory information
- */
-typedef struct AOTMemory {
-    /* memory info */
-    uint32 memory_flags;
-    uint32 num_bytes_per_page;
-    uint32 mem_init_page_count;
-    uint32 mem_max_page_count;
-} AOTMemory;
 
 /**
  * A segment of memory init data
@@ -113,7 +103,7 @@ typedef struct AOTMemInitData {
     /* Byte count */
     uint32 byte_count;
     /* Byte array */
-    uint8 bytes[1];
+    uint8 *bytes;
 } AOTMemInitData;
 
 /**
@@ -122,31 +112,8 @@ typedef struct AOTMemInitData {
 typedef struct AOTImportTable {
     char *module_name;
     char *table_name;
-    uint8 elem_type;
-    uint8 table_flags;
-    bool possible_grow;
-    uint32 table_init_size;
-    uint32 table_max_size;
-#if WASM_ENABLE_GC != 0
-    WASMRefType *elem_ref_type;
-#endif
+    AOTTableType table_type;
 } AOTImportTable;
-
-/**
- * Table
- */
-typedef struct AOTTable {
-    uint8 elem_type;
-    uint8 table_flags;
-    bool possible_grow;
-    uint32 table_init_size;
-    uint32 table_max_size;
-#if WASM_ENABLE_GC != 0
-    WASMRefType *elem_ref_type;
-    /* init expr for the whole table */
-    InitializerExpression init_expr;
-#endif
-} AOTTable;
 
 /**
  * A segment of table init data
@@ -175,9 +142,7 @@ typedef struct AOTTableInitData {
 typedef struct AOTImportGlobal {
     char *module_name;
     char *global_name;
-    /* VALUE_TYPE_I32/I64/F32/F64 */
-    uint8 type;
-    bool is_mutable;
+    WASMGlobalType type;
     uint32 size;
     /* The data offset of current global in global data */
     uint32 data_offset;
@@ -203,9 +168,7 @@ typedef struct AOTImportGlobal {
  * Global variable
  */
 typedef struct AOTGlobal {
-    /* VALUE_TYPE_I32/I64/F32/F64 */
-    uint8 type;
-    bool is_mutable;
+    WASMGlobalType type;
     uint32 size;
     /* The data offset of current global in global data */
     uint32 data_offset;
@@ -254,6 +217,9 @@ typedef struct AOTFunc {
     /* offset of each local, including function parameters
        and local variables */
     uint16 *local_offsets;
+#if WASM_ENABLE_BRANCH_HINTS != 0
+    uint8 *code_body_begin;
+#endif
 } AOTFunc;
 
 typedef struct AOTCompData {
@@ -333,11 +299,15 @@ typedef struct AOTCompData {
 #if WASM_ENABLE_DEBUG_AOT != 0
     dwarf_extractor_handle_t extractor;
 #endif
+
+#if WASM_ENABLE_BRANCH_HINTS != 0
+    struct WASMCompilationHint **function_hints;
+#endif
 } AOTCompData;
 
 typedef struct AOTNativeSymbol {
     bh_list_link link;
-    char symbol[32];
+    char symbol[48];
     int32 index;
 } AOTNativeSymbol;
 
@@ -349,7 +319,7 @@ void
 aot_destroy_comp_data(AOTCompData *comp_data);
 
 char *
-aot_get_last_error();
+aot_get_last_error(void);
 
 void
 aot_set_last_error(const char *error);
@@ -375,11 +345,12 @@ aot_get_imp_tbl_data_slots(const AOTImportTable *tbl, bool is_jit_mode)
 {
 #if WASM_ENABLE_MULTI_MODULE != 0
     if (is_jit_mode)
-        return tbl->table_max_size;
+        return tbl->table_type.max_size;
 #else
     (void)is_jit_mode;
 #endif
-    return tbl->possible_grow ? tbl->table_max_size : tbl->table_init_size;
+    return tbl->table_type.possible_grow ? tbl->table_type.max_size
+                                         : tbl->table_type.init_size;
 }
 
 static inline uint32
@@ -387,11 +358,12 @@ aot_get_tbl_data_slots(const AOTTable *tbl, bool is_jit_mode)
 {
 #if WASM_ENABLE_MULTI_MODULE != 0
     if (is_jit_mode)
-        return tbl->table_max_size;
+        return tbl->table_type.max_size;
 #else
     (void)is_jit_mode;
 #endif
-    return tbl->possible_grow ? tbl->table_max_size : tbl->table_init_size;
+    return tbl->table_type.possible_grow ? tbl->table_type.max_size
+                                         : tbl->table_type.init_size;
 }
 
 #ifdef __cplusplus

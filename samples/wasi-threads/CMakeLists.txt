@@ -49,12 +49,12 @@ set(WAMR_BUILD_LIBC_BUILTIN 1)
 set(WAMR_BUILD_FAST_INTERP 1)
 set(WAMR_BUILD_LIBC_WASI 1)
 set(WAMR_BUILD_LIB_WASI_THREADS 1)
+set(WAMR_BUILD_REF_TYPES 1)
 
 # compiling and linking flags
 if (NOT (CMAKE_C_COMPILER MATCHES ".*clang.*" OR CMAKE_C_COMPILER_ID MATCHES ".*Clang"))
   set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
 endif ()
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wformat -Wformat-security")
 
 # build out vmlib
 set(WAMR_ROOT_DIR ${CMAKE_CURRENT_LIST_DIR}/../..)
@@ -65,7 +65,24 @@ add_library(vmlib ${WAMR_RUNTIME_LIB_SOURCE})
 
 
 ################ wasm application ################
-add_subdirectory(wasm-apps)
+# Use ExternalProject to avoid incorporating WAMR library compilation flags into the
+# compilation of the wasm application, which could lead to compatibility
+# issues due to different targets.
+# Like: clang: error: unsupported option '-arch' for target 'wasm32-wasi'
+
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/../cmake)
+find_package(WASISDK REQUIRED)
+
+include(ExternalProject)
+ExternalProject_Add(wasm-apps
+  SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/wasm-apps"
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} -S ${CMAKE_CURRENT_SOURCE_DIR}/wasm-apps -B build
+                      -DWASI_SDK_PREFIX=${WASISDK_HOME}
+                      -DCMAKE_TOOLCHAIN_FILE=${WASISDK_PTHREAD_TOOLCHAIN}
+  BUILD_COMMAND     ${CMAKE_COMMAND} --build build
+  INSTALL_COMMAND   ${CMAKE_COMMAND} --install build --prefix ${CMAKE_CURRENT_BINARY_DIR}
+)
+
 
 ################ wamr runtime ################
 include (${SHARED_DIR}/utils/uncommon/shared_uncommon.cmake)

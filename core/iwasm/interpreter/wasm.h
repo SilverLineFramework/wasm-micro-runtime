@@ -85,16 +85,39 @@ extern "C" {
 /**
  * Used by wamr compiler to represent object ref types,
  * including func object ref, externref object ref,
- * internal object ref, eq obect ref, i31 object ref,
- * struct object ref, array obect ref
+ * internal object ref, eq object ref, i31 object ref,
+ * struct object ref, array object ref
  */
 #define VALUE_TYPE_GC_REF 0x43
 
+#define MAX_PAGE_COUNT_FLAG 0x01
+#define SHARED_MEMORY_FLAG 0x02
+#define MEMORY64_FLAG 0x04
+#define MAX_TABLE_SIZE_FLAG 0x01
+/* the shared flag for table is not actual used now */
+#define SHARED_TABLE_FLAG 0x02
+#define TABLE64_FLAG 0x04
+
+/**
+ * In the multi-memory proposal, the memarg in loads and stores are
+ * reinterpreted as a bitfield, bit 6 serves as a flag indicating the presence
+ * of the optional memory index, if it is set, then an i32 memory index follows
+ * after the alignment bitfield
+ */
+#define OPT_MEMIDX_FLAG 0x40
+
 #define DEFAULT_NUM_BYTES_PER_PAGE 65536
 #define DEFAULT_MAX_PAGES 65536
+#define DEFAULT_MEM64_MAX_PAGES UINT32_MAX
 
 /* Max size of linear memory */
 #define MAX_LINEAR_MEMORY_SIZE (4 * (uint64)BH_GB)
+/* Roughly 274 TB */
+#define MAX_LINEAR_MEM64_MEMORY_SIZE \
+    (DEFAULT_MEM64_MAX_PAGES * (uint64)64 * (uint64)BH_KB)
+/* Macro to check memory flag and return appropriate memory size */
+#define GET_MAX_LINEAR_MEMORY_SIZE(is_memory64) \
+    (is_memory64 ? MAX_LINEAR_MEM64_MEMORY_SIZE : MAX_LINEAR_MEMORY_SIZE)
 
 #if WASM_ENABLE_GC == 0
 typedef uintptr_t table_elem_type_t;
@@ -112,6 +135,12 @@ typedef void *table_elem_type_t;
 #define INIT_EXPR_TYPE_F64_CONST 0x44
 #define INIT_EXPR_TYPE_V128_CONST 0xFD
 #define INIT_EXPR_TYPE_GET_GLOBAL 0x23
+#define INIT_EXPR_TYPE_I32_ADD 0x6A
+#define INIT_EXPR_TYPE_I32_SUB 0x6B
+#define INIT_EXPR_TYPE_I32_MUL 0x6C
+#define INIT_EXPR_TYPE_I64_ADD 0x7C
+#define INIT_EXPR_TYPE_I64_SUB 0x7D
+#define INIT_EXPR_TYPE_I64_MUL 0x7E
 #define INIT_EXPR_TYPE_REFNULL_CONST 0xD0
 #define INIT_EXPR_TYPE_FUNCREF_CONST 0xD2
 #define INIT_EXPR_TYPE_STRUCT_NEW 0xD3
@@ -202,10 +231,11 @@ typedef struct WASMTag WASMTag;
 
 #ifndef WASM_VALUE_DEFINED
 #define WASM_VALUE_DEFINED
+
 typedef union V128 {
     int8 i8x16[16];
     int16 i16x8[8];
-    int32 i32x8[4];
+    int32 i32x4[4];
     int64 i64x2[2];
     float32 f32x4[4];
     float64 f64x2[2];
@@ -238,13 +268,13 @@ typedef union WASMValue {
 #endif /* end of WASM_VALUE_DEFINED */
 
 typedef struct WASMStructNewInitValues {
-    uint8 type_idx;
+    uint32 type_idx;
     uint32 count;
     WASMValue fields[1];
 } WASMStructNewInitValues;
 
 typedef struct WASMArrayNewInitValues {
-    uint8 type_idx;
+    uint32 type_idx;
     uint32 length;
     WASMValue elem_data[1];
 } WASMArrayNewInitValues;
@@ -253,8 +283,40 @@ typedef struct InitializerExpression {
     /* type of INIT_EXPR_TYPE_XXX, which is an instruction of
        constant expression */
     uint8 init_expr_type;
-    WASMValue u;
+    union {
+        struct {
+            WASMValue v;
+        } unary;
+        struct {
+            struct InitializerExpression *l_expr;
+            struct InitializerExpression *r_expr;
+        } binary;
+    } u;
 } InitializerExpression;
+
+static inline bool
+is_expr_binary_op(uint8 flag)
+{
+    return flag == INIT_EXPR_TYPE_I32_ADD || flag == INIT_EXPR_TYPE_I32_SUB
+           || flag == INIT_EXPR_TYPE_I32_MUL || flag == INIT_EXPR_TYPE_I64_ADD
+           || flag == INIT_EXPR_TYPE_I64_SUB || flag == INIT_EXPR_TYPE_I64_MUL;
+}
+
+/* check if table or data offset is valid for i32 offset */
+static inline bool
+is_valid_i32_offset(uint8 flag)
+{
+    return flag == INIT_EXPR_TYPE_I32_CONST || flag == INIT_EXPR_TYPE_I32_ADD
+           || flag == INIT_EXPR_TYPE_I32_SUB || flag == INIT_EXPR_TYPE_I32_MUL;
+}
+
+/* check if table or data offset is valid for i64 offset */
+static inline bool
+is_valid_i64_offset(uint8 flag)
+{
+    return flag == INIT_EXPR_TYPE_I64_CONST || flag == INIT_EXPR_TYPE_I64_ADD
+           || flag == INIT_EXPR_TYPE_I64_SUB || flag == INIT_EXPR_TYPE_I64_MUL;
+}
 
 #if WASM_ENABLE_GC != 0
 /**
@@ -263,7 +325,7 @@ typedef struct InitializerExpression {
  */
 typedef struct RefHeapType_TypeIdx {
     /* ref_type is REF_TYPE_HT_NULLABLE or
-       REF_TYPE_HT_NON_NULLABLE, (0x6C or 0x6B) */
+       REF_TYPE_HT_NON_NULLABLE, (0x63 or 0x64) */
     uint8 ref_type;
     /* true if ref_type is REF_TYPE_HT_NULLABLE */
     bool nullable;
@@ -277,7 +339,7 @@ typedef struct RefHeapType_TypeIdx {
  */
 typedef struct RefHeapType_Common {
     /* ref_type is REF_TYPE_HT_NULLABLE or
-       REF_TYPE_HT_NON_NULLABLE (0x6C or 0x6B) */
+       REF_TYPE_HT_NON_NULLABLE (0x63 or 0x64) */
     uint8 ref_type;
     /* true if ref_type is REF_TYPE_HT_NULLABLE */
     bool nullable;
@@ -327,18 +389,24 @@ typedef struct WASMType {
     uint16 type_flag;
 
     bool is_sub_final;
+    /* How many types are referring to this type */
+    uint16 ref_count;
     /* The inheritance depth */
-    uint32 inherit_depth;
+    uint16 inherit_depth;
     /* The root type */
     struct WASMType *root_type;
     /* The parent type */
     struct WASMType *parent_type;
     uint32 parent_type_idx;
 
-    /* number of internal types in the current rec group, if the type is not in
-     * a recursive group, rec_count = 0 */
+    /* The number of internal types in the current rec group, and if
+       the type is not in a recursive group, rec_count is 1 since a
+       single type definition is reinterpreted as a short-hand for a
+       recursive group containing just one type */
     uint16 rec_count;
     uint16 rec_idx;
+    /* The index of the begin type of this group */
+    uint32 rec_begin_type_idx;
 } WASMType, *WASMTypePtr;
 #endif /* end of WASM_ENABLE_GC */
 
@@ -364,9 +432,6 @@ typedef struct WASMFuncType {
     uint16 ref_type_map_count;
     WASMRefTypeMap *ref_type_maps;
     WASMRefTypeMap *result_ref_type_maps;
-    /* minimal type index of the type equal to this type,
-       used in type equal check in call_indirect opcode */
-    uint32 min_type_idx_normalized;
 #else
     uint16 ref_count;
 #endif
@@ -465,12 +530,13 @@ typedef void *WASMString;
 #endif /* end of WASM_ENABLE_STRINGREF != 0 */
 #endif /* end of WASM_ENABLE_GC != 0 */
 
-typedef struct WASMTable {
+typedef struct WASMTableType {
     uint8 elem_type;
     /**
      * 0: no max size and not shared
-     * 1: hax max size
+     * 1: has max size
      * 2: shared
+     * 4: table64
      */
     uint8 flags;
     bool possible_grow;
@@ -479,10 +545,25 @@ typedef struct WASMTable {
     uint32 max_size;
 #if WASM_ENABLE_GC != 0
     WASMRefType *elem_ref_type;
+#endif
+} WASMTableType;
+
+typedef struct WASMTable {
+    WASMTableType table_type;
+#if WASM_ENABLE_GC != 0
     /* init expr for the whole table */
     InitializerExpression init_expr;
 #endif
 } WASMTable;
+
+#if WASM_ENABLE_MEMORY64 != 0
+typedef uint64 mem_offset_t;
+#define PR_MEM_OFFSET PRIu64
+#else
+typedef uint32 mem_offset_t;
+#define PR_MEM_OFFSET PRIu32
+#endif
+typedef mem_offset_t tbl_elem_idx_t;
 
 typedef struct WASMMemory {
     uint32 flags;
@@ -490,20 +571,15 @@ typedef struct WASMMemory {
     uint32 init_page_count;
     uint32 max_page_count;
 } WASMMemory;
+#ifndef WASM_MEMORY_T_DEFINED
+#define WASM_MEMORY_T_DEFINED
+typedef struct WASMMemory WASMMemoryType;
+#endif
 
 typedef struct WASMTableImport {
     char *module_name;
     char *field_name;
-    /* 0: no max size, 1: has max size */
-    uint8 elem_type;
-    uint8 flags;
-    bool possible_grow;
-    uint32 init_size;
-    /* specified if (flags & 1), else it is 0x10000 */
-    uint32 max_size;
-#if WASM_ENABLE_GC != 0
-    WASMRefType *elem_ref_type;
-#endif
+    WASMTableType table_type;
 #if WASM_ENABLE_MULTI_MODULE != 0
     WASMModule *import_module;
     WASMTable *import_table_linked;
@@ -513,10 +589,7 @@ typedef struct WASMTableImport {
 typedef struct WASMMemoryImport {
     char *module_name;
     char *field_name;
-    uint32 flags;
-    uint32 num_bytes_per_page;
-    uint32 init_page_count;
-    uint32 max_page_count;
+    WASMMemoryType mem_type;
 #if WASM_ENABLE_MULTI_MODULE != 0
     WASMModule *import_module;
     WASMMemory *import_memory_linked;
@@ -552,7 +625,7 @@ typedef struct WASMTagImport {
     char *field_name;
     uint8 attribute; /* the type of the tag (numerical) */
     uint32 type;     /* the type of the catch function (numerical)*/
-    WASMType *tag_type;
+    WASMFuncType *tag_type;
     void *tag_ptr_linked;
 
 #if WASM_ENABLE_MULTI_MODULE != 0
@@ -564,11 +637,15 @@ typedef struct WASMTagImport {
 } WASMTagImport;
 #endif
 
+typedef struct WASMGlobalType {
+    uint8 val_type;
+    bool is_mutable;
+} WASMGlobalType;
+
 typedef struct WASMGlobalImport {
     char *module_name;
     char *field_name;
-    uint8 type;
-    bool is_mutable;
+    WASMGlobalType type;
     bool is_linked;
     /* global data after linked */
     WASMValue global_data_linked;
@@ -674,19 +751,39 @@ struct WASMFunction {
     void *call_to_fast_jit_from_llvm_jit;
 #endif
 #endif
+
+#if WASM_ENABLE_BRANCH_HINTS != 0
+    uint8 *code_body_begin;
+#endif
 };
 
 #if WASM_ENABLE_TAGS != 0
 struct WASMTag {
     uint8 attribute; /* the attribute property of the tag (expected to be 0) */
     uint32 type; /* the type of the tag (expected valid inden in type table) */
-    WASMType *tag_type;
+    WASMFuncType *tag_type;
+};
+#endif
+
+#if WASM_ENABLE_BRANCH_HINTS != 0
+enum WASMCompilationHintType {
+    DUMMY = 0,
+    WASM_COMPILATION_BRANCH_HINT = 0,
+};
+struct WASMCompilationHint {
+    struct WASMCompilationHint *next;
+    enum WASMCompilationHintType type;
+};
+struct WASMCompilationHintBranchHint {
+    struct WASMCompilationHint *next;
+    enum WASMCompilationHintType type;
+    uint32 offset;
+    bool is_likely;
 };
 #endif
 
 struct WASMGlobal {
-    uint8 type;
-    bool is_mutable;
+    WASMGlobalType type;
 #if WASM_ENABLE_GC != 0
     WASMRefType *ref_type;
 #endif
@@ -726,6 +823,7 @@ typedef struct WASMDataSeg {
     bool is_passive;
 #endif
     uint8 *data;
+    bool is_data_cloned;
 } WASMDataSeg;
 
 typedef struct BlockAddr {
@@ -742,7 +840,7 @@ typedef struct WASIArguments {
     uint32 map_dir_count;
     const char **env;
     uint32 env_count;
-    /* in CIDR noation */
+    /* in CIDR notation */
     const char **addr_pool;
     uint32 addr_count;
     const char **ns_lookup_pool;
@@ -750,6 +848,7 @@ typedef struct WASIArguments {
     char **argv;
     uint32 argc;
     os_raw_file_handle stdio[3];
+    bool set_by_user;
 } WASIArguments;
 #endif
 
@@ -810,6 +909,9 @@ struct WASMModule {
        Wasm_Module_AoT, and this structure should be treated as
        AOTModule structure. */
     uint32 module_type;
+
+    /* the package version read from the WASM file */
+    uint32 package_version;
 
     uint32 type_count;
     uint32 import_count;
@@ -940,8 +1042,9 @@ struct WASMModule {
     uint64 buf_code_size;
 #endif
 
-#if WASM_ENABLE_DEBUG_INTERP != 0 || WASM_ENABLE_FAST_JIT != 0 \
-    || WASM_ENABLE_DUMP_CALL_STACK != 0 || WASM_ENABLE_JIT != 0
+#if WASM_ENABLE_DEBUG_INTERP != 0 || WASM_ENABLE_FAST_JIT != 0  \
+    || WASM_ENABLE_DUMP_CALL_STACK != 0 || WASM_ENABLE_JIT != 0 \
+    || WASM_ENABLE_WAMR_COMPILER != 0
     uint8 *load_addr;
     uint64 load_size;
 #endif
@@ -966,6 +1069,10 @@ struct WASMModule {
 #if WASM_ENABLE_CUSTOM_NAME_SECTION != 0
     const uint8 *name_section_buf;
     const uint8 *name_section_buf_end;
+#endif
+
+#if WASM_ENABLE_BRANCH_HINTS != 0
+    struct WASMCompilationHint **function_hints;
 #endif
 
 #if WASM_ENABLE_LOAD_CUSTOM_SECTION != 0
@@ -1001,7 +1108,7 @@ struct WASMModule {
     /**
      * func pointers of LLVM JITed (un-imported) functions
      * for non Multi-Tier JIT mode:
-     *   each pointer is set to the lookuped llvm jit func ptr, note that it
+     *   each pointer is set to the looked up llvm jit func ptr, note that it
      *   is a stub and will trigger the actual compilation when it is called
      * for Multi-Tier JIT mode:
      *   each pointer is inited as call_to_fast_jit code block, when the llvm
@@ -1051,6 +1158,9 @@ struct WASMModule {
 
     /* user defined name */
     char *name;
+
+    /* Whether the underlying wasm binary buffer can be freed */
+    bool is_binary_freeable;
 };
 
 typedef struct BlockType {
@@ -1197,8 +1307,11 @@ wasm_value_type_size_internal(uint8 value_type, uint8 pointer_size)
         return sizeof(int16);
 #endif
     else {
-        bh_assert(0);
+        bh_assert(0 && "Unknown value type. It should be handled ahead.");
     }
+#if WASM_ENABLE_GC == 0
+    (void)pointer_size;
+#endif
     return 0;
 }
 
@@ -1312,8 +1425,8 @@ block_type_get_param_types(BlockType *block_type, uint8 **p_param_types,
         param_count = func_type->param_count;
 #if WASM_ENABLE_GC != 0
         *p_param_reftype_maps = func_type->ref_type_maps;
-        *p_param_reftype_map_count =
-            func_type->result_ref_type_maps - func_type->ref_type_maps;
+        *p_param_reftype_map_count = (uint32)(func_type->result_ref_type_maps
+                                              - func_type->ref_type_maps);
 #endif
     }
     else {

@@ -561,6 +561,7 @@ pthread_create_wrapper(wasm_exec_env_t exec_env,
     uint32 aux_stack_size;
     uint64 aux_stack_start = 0;
     int32 ret = -1;
+    struct InstantiationArgs2 args;
 
     bh_assert(module);
     bh_assert(module_inst);
@@ -579,13 +580,13 @@ pthread_create_wrapper(wasm_exec_env_t exec_env,
     }
 #endif
 
+    wasm_runtime_instantiation_args_set_defaults(&args);
+    wasm_runtime_instantiation_args_set_default_stack_size(&args, stack_size);
+    wasm_runtime_instantiation_args_set_custom_data(
+        &args, wasm_runtime_get_custom_data(module_inst));
     if (!(new_module_inst = wasm_runtime_instantiate_internal(
-              module, module_inst, exec_env, stack_size, 0, 0, NULL, 0)))
+              module, module_inst, exec_env, &args, NULL, 0)))
         return -1;
-
-    /* Set custom_data to new module instance */
-    wasm_runtime_set_custom_data_internal(
-        new_module_inst, wasm_runtime_get_custom_data(module_inst));
 
     wasm_native_inherit_contexts(new_module_inst, module_inst);
 
@@ -1123,7 +1124,8 @@ posix_memalign_wrapper(wasm_exec_env_t exec_env, void **memptr, int32 align,
     wasm_module_inst_t module_inst = get_module_inst(exec_env);
     void *p = NULL;
 
-    *((int32 *)memptr) = module_malloc(size, (void **)&p);
+    /* TODO: for memory 64, module_malloc may return uint64 offset */
+    *((uint32 *)memptr) = (uint32)module_malloc(size, (void **)&p);
     if (!p)
         return -1;
 

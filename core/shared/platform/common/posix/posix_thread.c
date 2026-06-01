@@ -4,7 +4,9 @@
  */
 
 #ifndef _GNU_SOURCE
+#if !defined(__RTTHREAD__)
 #define _GNU_SOURCE
+#endif
 #endif
 #include "platform_api_vmcore.h"
 #include "platform_api_extension.h"
@@ -46,6 +48,13 @@ os_thread_wrapper(void *arg)
 #endif
 #ifdef OS_ENABLE_WAKEUP_BLOCKING_OP
     os_end_blocking_op();
+#endif
+#if BH_DEBUG != 0
+#if defined __APPLE__
+    pthread_setname_np("wamr");
+#else
+    pthread_setname_np(pthread_self(), "wamr");
+#endif
 #endif
     start_func(thread_arg);
 #ifdef OS_ENABLE_HW_BOUND_CHECK
@@ -445,13 +454,10 @@ os_thread_get_stack_boundary()
         pthread_attr_destroy(&attr);
         if (stack_size > max_stack_size)
             addr = addr + stack_size - max_stack_size;
-        if (guard_size < (size_t)page_size)
-            /* Reserved 1 guard page at least for safety */
-            guard_size = (size_t)page_size;
         addr += guard_size;
     }
     (void)stack_size;
-#elif defined(__APPLE__) || defined(__NuttX__)
+#elif defined(__APPLE__) || defined(__NuttX__) || defined(__RTTHREAD__)
     if ((addr = (uint8 *)pthread_get_stackaddr_np(self))) {
         stack_size = pthread_get_stacksize_np(self);
 
@@ -466,8 +472,6 @@ os_thread_get_stack_boundary()
             stack_size = max_stack_size;
 
         addr -= stack_size;
-        /* Reserved 1 guard page at least for safety */
-        addr += page_size;
     }
 #endif
 
@@ -491,7 +495,7 @@ os_thread_jit_write_protect_np(bool enabled)
 #define SIG_ALT_STACK_SIZE (32 * 1024)
 
 /**
- * Whether thread signal enviornment is initialized:
+ * Whether thread signal environment is initialized:
  *   the signal handler is registered, the stack pages are touched,
  *   the stack guard pages are set and signal alternate stack are set.
  */
@@ -500,6 +504,8 @@ static os_thread_local_attribute bool thread_signal_inited = false;
 #if WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
 /* The signal alternate stack base addr */
 static os_thread_local_attribute uint8 *sigalt_stack_base_addr;
+/* The previous signal alternate stack */
+static os_thread_local_attribute stack_t prev_sigalt_stack;
 
 /*
  * ASAN is not designed to work with custom stack unwind or other low-level
@@ -679,7 +685,9 @@ os_thread_signal_init(os_signal_handler handler)
     sigalt_stack_info.ss_sp = map_addr;
     sigalt_stack_info.ss_size = map_size;
     sigalt_stack_info.ss_flags = 0;
-    if (sigaltstack(&sigalt_stack_info, NULL) != 0) {
+    memset(&prev_sigalt_stack, 0, sizeof(stack_t));
+    /* Set signal alternate stack and save the previous one */
+    if (sigaltstack(&sigalt_stack_info, &prev_sigalt_stack) != 0) {
         os_printf("Failed to init signal alternate stack\n");
         goto fail2;
     }
@@ -688,7 +696,7 @@ os_thread_signal_init(os_signal_handler handler)
     memset(&prev_sig_act_SIGSEGV, 0, sizeof(struct sigaction));
     memset(&prev_sig_act_SIGBUS, 0, sizeof(struct sigaction));
 
-    /* Install signal hanlder */
+    /* Install signal handler */
     sig_act.sa_sigaction = signal_callback;
     sig_act.sa_flags = SA_SIGINFO | SA_NODEFER;
 #if WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
@@ -704,6 +712,13 @@ os_thread_signal_init(os_signal_handler handler)
 #if WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
     sigalt_stack_base_addr = map_addr;
 #endif
+
+#if defined(os_thread_local_attribute)
+    // calculate and cache the new stack boundary.
+    // see https://github.com/bytecodealliance/wasm-micro-runtime/issues/3966
+    (void)os_thread_get_stack_boundary();
+#endif
+
     signal_handler = handler;
     thread_signal_inited = true;
     return 0;
@@ -725,19 +740,12 @@ fail1:
 void
 os_thread_signal_destroy()
 {
-#if WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
-    stack_t sigalt_stack_info;
-#endif
-
     if (!thread_signal_inited)
         return;
 
 #if WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
-    /* Disable signal alternate stack */
-    memset(&sigalt_stack_info, 0, sizeof(stack_t));
-    sigalt_stack_info.ss_flags = SS_DISABLE;
-    sigalt_stack_info.ss_size = SIG_ALT_STACK_SIZE;
-    sigaltstack(&sigalt_stack_info, NULL);
+    /* Restore the previous signal alternate stack */
+    sigaltstack(&prev_sigalt_stack, NULL);
 
     os_munmap(sigalt_stack_base_addr, SIG_ALT_STACK_SIZE);
 

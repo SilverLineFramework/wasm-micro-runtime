@@ -7,6 +7,14 @@ include(CheckPIESupported)
 
 project(debug_tools_sample)
 
+list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
+find_package(WASISDK REQUIRED)
+
+option(SOURCE_MAP_DEMO "Enable source map demo" OFF)
+if (SOURCE_MAP_DEMO)
+  find_package(EMSCRIPTEN 3.1.50 REQUIRED)
+endif ()
+
 ################  runtime settings  ################
 string (TOLOWER ${CMAKE_HOST_SYSTEM_NAME} WAMR_BUILD_PLATFORM)
 if (APPLE)
@@ -52,7 +60,6 @@ set(WAMR_BUILD_DUMP_CALL_STACK 1) # Otherwise stack trace is not printed (addr2l
 if (NOT (CMAKE_C_COMPILER MATCHES ".*clang.*" OR CMAKE_C_COMPILER_ID MATCHES ".*Clang"))
   set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
 endif ()
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wformat -Wformat-security")
 
 # build out vmlib
 set(WAMR_ROOT_DIR ${CMAKE_CURRENT_LIST_DIR}/../..)
@@ -61,7 +68,30 @@ include (${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 add_library(vmlib ${WAMR_RUNTIME_LIB_SOURCE})
 
 ################ wasm application ################
-add_subdirectory(wasm-apps)
+include(ExternalProject)
+
+# wasm32-wasi
+ExternalProject_Add(wasm32-wasi
+  SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/wasm-apps"
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} -S ${CMAKE_CURRENT_SOURCE_DIR}/wasm-apps -B build
+                      -DWASI_SDK_PREFIX=${WASISDK_HOME}
+                      -DCMAKE_TOOLCHAIN_FILE=${WASISDK_TOOLCHAIN}
+  BUILD_COMMAND     ${CMAKE_COMMAND} --build build
+  INSTALL_COMMAND   ${CMAKE_COMMAND} --install build --prefix ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+if (EMSCRIPTEN_FOUND)
+  # wasm32-emscripten
+  ExternalProject_Add(wasm32-emscripten
+    SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/wasm-apps"
+    CONFIGURE_COMMAND ${CMAKE_COMMAND} -S ${CMAKE_CURRENT_SOURCE_DIR}/wasm-apps -B build
+                        -DCMAKE_TOOLCHAIN_FILE=${EMSCRIPTEN_TOOLCHAIN}
+                        -DCMAKE_VERBOSE_MAKEFILE=On
+                        -DSOURCE_MAP_DEMO=On
+    BUILD_COMMAND     ${CMAKE_COMMAND} --build build
+    INSTALL_COMMAND   ${CMAKE_COMMAND} --install build --prefix ${CMAKE_CURRENT_BINARY_DIR}/emscripten
+  )
+endif ()
 
 ################ wamr runtime ################
 include (${SHARED_DIR}/utils/uncommon/shared_uncommon.cmake)

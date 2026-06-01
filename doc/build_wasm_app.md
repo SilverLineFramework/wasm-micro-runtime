@@ -16,24 +16,24 @@ For [AssemblyScript](https://github.com/AssemblyScript/assemblyscript), please r
 
 For Rust, please refer to [Install Rust and Cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html) to install *cargo*, *rustc* and *rustup*. By default they are under ~/.cargo/bin.
 
-And then run such a command to install `wasm32-wasi` target.
+And then run such a command to install `wasm32-wasip1` target.
 
 ``` bash
-$ rustup target add wasm32-wasi
+$ rustup target add wasm32-wasip1
 ```
 
 To build WASM applications, run
 
 ``` bash
-$ cargo build --target wasm32-wasi
+$ cargo build --target wasm32-wasip1
 ```
 
-The output files are under `target/wasm32-wasi`.
+The output files are under `target/wasm32-wasip1`.
 
 To build a release version
 
 ``` bash
-$ cargo build --release --target wasm32-wasi
+$ cargo build --release --target wasm32-wasip1
 ```
 
 
@@ -90,7 +90,7 @@ There are some useful options that are used to compile C/C++ to Wasm (for a full
 
 - **-Wl,--max-memory=\<value\>** Maximum size of the linear memory, which must be a multiple of 65536
 
-- **-z stack-size=\<vlaue\>** The auxiliary stack size, which is an area of linear memory, must be smaller than the initial memory size.
+- **-z stack-size=\<value\>** The auxiliary stack size, which is an area of linear memory, must be smaller than the initial memory size.
 
 - **-Wl,--strip-all** Strip all symbols
 
@@ -275,7 +275,7 @@ You can cross compile your project by using the toolchain provided by WAMR.
 Assume the original `CMakeLists.txt` for `test.c` likes below:
 
 ``` cmake
-cmake_minimum_required (VERSION 3.5)
+cmake_minimum_required (VERSION 3.14)
 project(hello_world)
 add_executable(hello_world test.c)
 ```
@@ -343,7 +343,7 @@ Usage: wamrc [options] -o output_file wasm_file
                             Use --cpu-features=+help to list all the features supported
   --opt-level=n             Set the optimization level (0 to 3, default is 3)
   --size-level=n            Set the code size level (0 to 3, default is 3)
-  -sgx                      Generate code for SGX platform (Intel Software Guard Extention)
+  -sgx                      Generate code for SGX platform (Intel Software Guard Extension)
   --bounds-checks=1/0       Enable or disable the bounds checks for memory access:
                               by default it is disabled in all 64-bit platforms except SGX and
                               in these platforms runtime does bounds checks with hardware trap,
@@ -355,6 +355,8 @@ Usage: wamrc [options] -o output_file wasm_file
                               llvmir-unopt   Unoptimized LLVM IR
                               llvmir-opt     Optimized LLVM IR
   --disable-bulk-memory     Disable the MVP bulk memory feature
+  --enable-bulk-memory-opt  Enable bulk memory opt feature
+  --enable-extended-const   Enable extended const expr feature
   --enable-multi-thread     Enable multi-thread feature, the dependent features bulk-memory and
                             thread-mgr will be enabled automatically
   --enable-tail-call        Enable the post-MVP tail call feature
@@ -363,6 +365,9 @@ Usage: wamrc [options] -o output_file wasm_file
                               and by default it is enabled in x86-64 target and disabled
                               in other targets
   --disable-ref-types       Disable the MVP reference types feature
+  --enable-call-indirect-overlong
+                            Enable call indirect overlong feature
+  --enable-lime1            Enable Lime1
   --disable-aux-stack-check Disable auxiliary stack overflow/underflow check
   --enable-dump-call-stack  Enable stack trace feature
   --enable-perf-profiling   Enable function performance profiling
@@ -377,14 +382,31 @@ Examples: wamrc -o test.aot test.wasm
 When making major ABI changes for AoT-compiled modules, we bump
 `AOT_CURRENT_VERSION` constant in `core/config.h` header.
 The runtime rejects to load a module AoT-compiled with wamrc with
-a different `AOT_CURRENT_VERSION`.
+a non-compatible`AOT_CURRENT_VERSION`.
 
 We try our best to maintain our runtime ABI for AoT-compiled modules
-compatible among WAMR versions with the same `AOT_CURRENT_VERSION`
+compatible among WAMR versions with compatible `AOT_CURRENT_VERSION`
 so that combinations of older wamrc and newer runtime usually work.
-However, there might be minor incompatibilities time to time.
-For productions, we recommend to use the exactly same version of
-wamrc and the runtime.
+
+However, there might be minor incompatibilities from time to time. For
+example, we usually avoid bumping the version when making a change which
+affects only a small fraction of users. For productions, we recommend
+using exactly same versions of wamrc and the runtime.
+
+| WAMR version | AOT_CURRENT_VERSION | Compatible AOT version |                        |
+| ------------ | ------------------- | ---------------------- | ---------------------- |
+| 1.x          | 3                   | 3                      |                        |
+| 2.0.0        | 3                   | 3                      |                        |
+| 2.1.x        | 3                   | 3                      |                        |
+| 2.2.0        | 3                   | 3                      |                        |
+| 2.3.0        | 4                   | 3,4                    |                        |
+| 2.4.0        | 4                   | 3,4                    | See the following note |
+| 2.4.1        | 5                   | 5                      |                        |
+
+Note: 2.4.0 had a broken AoT versioning. See [issue 4504] for details.
+We recommend all 2.4.0 users to migrate to 2.4.1.
+
+[issue 4504]: https://github.com/bytecodealliance/wasm-micro-runtime/issues/4504
 
 ## AoT compilation with 3rd-party toolchains
 

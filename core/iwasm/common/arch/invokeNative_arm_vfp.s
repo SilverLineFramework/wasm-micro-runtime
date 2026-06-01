@@ -53,7 +53,7 @@ _invokeNative:
         vldr    s13, [r4, #52]
         vldr    s14, [r4, #56]
         vldr    s15, [r4, #60]
-        /* Directly call the fucntion if no args in stack */
+        /* Directly call the function if no args in stack */
         cmp     r5, #0
         beq     call_func
 
@@ -84,3 +84,6 @@ return:
         ldmfd   sp!, {r4, r5, r6, r7, lr}
         bx      lr
 
+#if defined(__linux__) && defined(__ELF__)
+.section .note.GNU-stack,"",%progbits
+#endif

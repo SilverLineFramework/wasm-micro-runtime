@@ -423,7 +423,7 @@ jmp_from_label_to_label(x86::Assembler &a, bh_list *jmp_info_list,
 
 /**
  * Encode detecting compare result register according to condition code
- * and then jumping to suitable label when the condtion is met
+ * and then jumping to suitable label when the condition is met
  *
  * @param cc the compiler context
  * @param a the assembler to emit the code
@@ -431,7 +431,7 @@ jmp_from_label_to_label(x86::Assembler &a, bh_list *jmp_info_list,
  * @param label_src the index of src label
  * @param op the opcode of condition operation
  * @param r1 the label info when condition is met
- * @param r2 the label info when condition is unmet, do nonthing if VOID
+ * @param r2 the label info when condition is unmet, do nothing if VOID
  * @param is_last_insn if current insn is the last insn of current block
  *
  * @return true if success, false if failed
@@ -2589,7 +2589,7 @@ alu_r_r_r_i32(x86::Assembler &a, ALU_OP op, int32 reg_no_dst, int32 reg_no1_src,
                 if (reg_no2_src == REG_EDX_IDX) {
                     /* convert `REM_S edx, eax, edx` into
                        `mov esi, edx` and `REM_S edx eax, rsi` to
-                       avoid overwritting edx when a.cdq() */
+                       avoid overwriting edx when a.cdq() */
                     a.mov(regs_i32[REG_I32_FREE_IDX], regs_i32[REG_EDX_IDX]);
                     reg_no2_src = REG_I32_FREE_IDX;
                 }
@@ -2609,7 +2609,7 @@ alu_r_r_r_i32(x86::Assembler &a, ALU_OP op, int32 reg_no_dst, int32 reg_no1_src,
                 if (reg_no2_src == REG_EDX_IDX) {
                     /* convert `REM_U edx, eax, edx` into
                        `mov esi, edx` and `REM_U edx eax, rsi` to
-                       avoid overwritting edx when unsigned extend
+                       avoid overwriting edx when unsigned extend
                        eax to edx:eax */
                     a.mov(regs_i32[REG_I32_FREE_IDX], regs_i32[REG_EDX_IDX]);
                     reg_no2_src = REG_I32_FREE_IDX;
@@ -5602,7 +5602,7 @@ fail:
             a.jmp(imm);                                                    \
             if (!err_handler->err) {                                       \
                 /* The offset written by asmjit is always 0, we patch it   \
-                   again, 6 is the size of jmp instruciton */              \
+                   again, 6 is the size of jmp instruction */              \
                 stream = (char *)a.code()->sectionById(0)->buffer().data() \
                          + a.code()->sectionById(0)->buffer().size() - 6;  \
                 _offset = label_offsets[label_dst]                         \
@@ -6169,7 +6169,7 @@ fail:
  * Replace all the jmp address pre-saved when the code cache hasn't been
  * allocated with actual address after code cache allocated
  *
- * @param cc compiler context containting the allocated code cacha info
+ * @param cc compiler context containing the allocated code cacha info
  * @param jmp_info_list the jmp info list
  */
 static void
@@ -6557,7 +6557,7 @@ at_cmpxchg_r_ra_base_r_offset_imm(x86::Assembler &a, uint32 bytes_dst,
  * @param a the assembler to emit the code
  * @param bytes_dst the bytes number of the data to actual operated on(load,
  * compare, replacement) could be 1(byte), 2(short), 4(int32), 8(int64)
- * @param data_xchg the immediate data for exchange(conditionally replacment
+ * @param data_xchg the immediate data for exchange(conditionally replacement
  * value)
  * @param reg_no_base the no of register that stores the base address
  *        of src&dst memory
@@ -6587,7 +6587,7 @@ at_cmpxchg_imm_ra_base_r_offset_r(x86::Assembler &a, uint32 bytes_dst,
  * @param a the assembler to emit the code
  * @param bytes_dst the bytes number of the data to actual operated on(load,
  * compare, replacement) could be 1(byte), 2(short), 4(int32), 8(int64)
- * @param data_xchg the immediate data for exchange(conditionally replacment
+ * @param data_xchg the immediate data for exchange(conditionally replacement
  * value)
  * @param reg_no_base the no of register that stores the base address
  *        of src&dst memory
@@ -7511,7 +7511,7 @@ at_rmw_xor_r_base_r_offset_r(x86::Assembler &a, uint32 bytes_dst,
             CHECK_KIND(r3, JIT_REG_KIND_I64);                                  \
         }                                                                      \
         /* r0: read/return value r2: memory base addr can't be const */        \
-        /* already check it's not const in LOAD_4ARGS(); */                    \
+        /* already check it's not const in LOAD_4ARGS() */                     \
         reg_no_dst = jit_reg_no(r0);                                           \
         CHECK_REG_NO(reg_no_dst, jit_reg_kind(r0));                            \
         /* mem_data base address has to be non-const */                        \
@@ -8820,7 +8820,7 @@ jit_codegen_compile_call_to_fast_jit(const WASMModule *module, uint32 func_idx)
 
         /* If yes, set eax to 0, return to caller */
 
-        /* Pop all integer arument registers */
+        /* Pop all integer argument registers */
         for (i = 0; i < MAX_REG_INTS; i++) {
             a.pop(regs_i64[reg_idx_of_int_args[i]]);
         }
@@ -9084,7 +9084,7 @@ jit_codegen_compile_call_to_fast_jit(const WASMModule *module, uint32 func_idx)
         a.mov(m, x86::rdx);
     }
 
-    /* Pop all integer arument registers */
+    /* Pop all integer argument registers */
     for (i = 0; i < MAX_REG_INTS; i++) {
         a.pop(regs_i64[reg_idx_of_int_args[i]]);
     }
@@ -9293,8 +9293,8 @@ jit_codegen_init()
         imm.setValue(INT32_MAX);
         a.jne(imm);
 
-        char *stream = (char *)a.code()->sectionById(0)->buffer().data()
-                       + a.code()->sectionById(0)->buffer().size();
+        char *stream_old = (char *)a.code()->sectionById(0)->buffer().data()
+                           + a.code()->sectionById(0)->buffer().size();
 
         /* If yes, call jit_set_exception_with_id to throw exception,
            and then set eax to JIT_INTERP_ACTION_THROWN, and jump to
@@ -9319,7 +9319,7 @@ jit_codegen_init()
         /* Patch the offset of jne instruction */
         char *stream_new = (char *)a.code()->sectionById(0)->buffer().data()
                            + a.code()->sectionById(0)->buffer().size();
-        *(int32 *)(stream - 4) = (int32)(stream_new - stream);
+        *(int32 *)(stream_old - 4) = (int32)(stream_new - stream_old);
     }
 
     /* Load compiled func ptr and call it */
@@ -9419,7 +9419,7 @@ static uint8 hreg_info_F64[3][16] = {
       1, 1, 1, 1, 1, 1, 1, 0 }, /* caller_saved_jitted */
 };
 
-static const JitHardRegInfo hreg_info = {
+static const JitHardRegInfo g_hreg_info = {
     {
         { 0, NULL, NULL, NULL }, /* VOID */
 
@@ -9459,7 +9459,7 @@ static const JitHardRegInfo hreg_info = {
 const JitHardRegInfo *
 jit_codegen_get_hreg_info()
 {
-    return &hreg_info;
+    return &g_hreg_info;
 }
 
 static const char *reg_names_i32[] = {

@@ -52,9 +52,21 @@ os_dumps_proc_mem_info(char *out, unsigned int size)
 void *
 os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
 {
-    if (size > ((unsigned)~0))
+    void *addr;
+
+    if (size >= UINT32_MAX)
         return NULL;
-    return BH_MALLOC((unsigned)size);
+
+    if ((addr = BH_MALLOC((uint32)size)))
+        memset(addr, 0, (uint32)size);
+
+    return addr;
+}
+
+void *
+os_mremap(void *old_addr, size_t old_size, size_t new_size)
+{
+    return os_mremap_slow(old_addr, old_size, new_size);
 }
 
 void
@@ -83,3 +95,9 @@ os_dcache_flush(void)
 void
 os_icache_flush(void *start, size_t len)
 {}
+
+os_raw_file_handle
+os_invalid_raw_handle(void)
+{
+    return -1;
+}

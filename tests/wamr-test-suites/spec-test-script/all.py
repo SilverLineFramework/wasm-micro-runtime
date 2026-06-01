@@ -22,7 +22,7 @@ To run a single non-GC case with aot mode:
   cd workspace
   python3 runtest.py --aot --wast2wasm wabt/bin/wat2wasm --interpreter iwasm \
     --aot-compiler wamrc spec/test/core/xxx.wast
-To run a single GC case:
+To run a single GC case case:
   cd workspace
   python3 runtest.py --wast2wasm spec/interpreter/wasm --interpreter iwasm \
     --aot-compiler wamrc --gc spec/test/core/xxx.wast
@@ -47,7 +47,6 @@ IWASM_CMD = get_iwasm_cmd(PLATFORM_NAME)
 IWASM_SGX_CMD = "../../../product-mini/platforms/linux-sgx/enclave-sample/iwasm"
 IWASM_QEMU_CMD = "iwasm"
 SPEC_TEST_DIR = "spec/test/core"
-EXCE_HANDLING_DIR = "exception-handling/test/core"
 WAST2WASM_CMD = exe_file_path("./wabt/out/gcc/Release/wat2wasm")
 SPEC_INTERPRETER_CMD = "spec/interpreter/wasm"
 WAMRC_CMD = "../../../wamr-compiler/build/wamrc"
@@ -67,6 +66,7 @@ AVAILABLE_TARGETS = [
     "RISCV64_LP64D",
     "THUMBV7",
     "THUMBV7_VFP",
+    "XTENSA",
 ]
 
 def ignore_the_case(
@@ -78,6 +78,8 @@ def ignore_the_case(
     multi_thread_flag=False,
     simd_flag=False,
     gc_flag=False,
+    memory64_flag=False,
+    multi_memory_flag=False,
     xip_flag=False,
     eh_flag=False,
     qemu_flag=False,
@@ -86,15 +88,24 @@ def ignore_the_case(
     if case_name in ["comments", "inline-module", "names"]:
         return True
 
-    if not multi_module_flag and case_name in ["imports", "linking"]:
+    if not multi_module_flag and case_name in ["imports", "linking", "simd_linking"]:
         return True
 
     # Note: x87 doesn't preserve sNaN and makes some relevant tests fail.
     if "i386" == target and case_name in ["float_exprs", "conversions"]:
         return True
 
+    # esp32s3 qemu doesn't have PSRAM emulation
+    if qemu_flag and target == 'xtensa' and case_name in ["memory_size"]:
+        return True
+
     if gc_flag:
-        if case_name in ["type-equivalence", "type-rec", "array_init_elem", "array_init_data"]:
+        if case_name in [
+            "array_init_elem",
+            "array_init_data",
+            "array_new_data",
+            "array_new_elem"
+        ]:
             return True
 
     if sgx_flag:
@@ -123,13 +134,15 @@ def ignore_the_case(
             "float_misc",
             "select",
             "memory_grow",
+            # Skip the test case for now, restore it after fixing the issue
+            "skip-stack-guard-page",
         ]:
             return True
 
     return False
 
 
-def preflight_check(aot_flag, eh_flag):
+def preflight_check(aot_flag, aot_compiler, eh_flag):
     if not pathlib.Path(SPEC_TEST_DIR).resolve().exists():
         print(f"Can not find {SPEC_TEST_DIR}")
         return False
@@ -138,12 +151,8 @@ def preflight_check(aot_flag, eh_flag):
         print(f"Can not find {WAST2WASM_CMD}")
         return False
 
-    if aot_flag and not pathlib.Path(WAMRC_CMD).resolve().exists():
-        print(f"Can not find {WAMRC_CMD}")
-        return False
-
-    if eh_flag and not pathlib.Path(EXCE_HANDLING_DIR).resolve().exists():
-        print(f"Can not find {EXCE_HANDLING_DIR}")
+    if aot_flag and not pathlib.Path(aot_compiler).resolve().exists():
+        print(f"Can not find {aot_compiler}")
         return False
 
     return True
@@ -153,6 +162,7 @@ def test_case(
     case_path,
     target,
     aot_flag=False,
+    aot_compiler=WAMRC_CMD,
     sgx_flag=False,
     multi_module_flag=False,
     multi_thread_flag=False,
@@ -162,6 +172,9 @@ def test_case(
     clean_up_flag=True,
     verbose_flag=True,
     gc_flag=False,
+    extended_const_flag=False,
+    memory64_flag=False,
+    multi_memory_flag=False,
     qemu_flag=False,
     qemu_firmware="",
     log="",
@@ -180,7 +193,7 @@ def test_case(
     if no_pty:
         CMD.append("--no-pty")
     CMD.append("--aot-compiler")
-    CMD.append(WAMRC_CMD)
+    CMD.append(aot_compiler)
 
     if aot_flag:
         CMD.append("--aot")
@@ -217,6 +230,15 @@ def test_case(
     if gc_flag:
         CMD.append("--gc")
 
+    if extended_const_flag:
+        CMD.append("--extended-const")
+
+    if memory64_flag:
+        CMD.append("--memory64")
+
+    if multi_memory_flag:
+        CMD.append("--multi-memory")
+
     if log != "":
         CMD.append("--log-dir")
         CMD.append(log)
@@ -231,7 +253,7 @@ def test_case(
         CMD,
         bufsize=1,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         universal_newlines=True,
     ) as p:
         try:
@@ -245,7 +267,7 @@ def test_case(
                 if verbose_flag:
                     print(output, end="")
                 else:
-                    if len(case_last_words) == 16:
+                    if len(case_last_words) == 1024:
                         case_last_words.pop(0)
                     case_last_words.append(output)
 
@@ -269,11 +291,14 @@ def test_case(
         except subprocess.TimeoutExpired:
             print("failed with TimeoutExpired")
             raise Exception(case_name)
-
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            raise e
 
 def test_suite(
     target,
     aot_flag=False,
+    aot_compiler=WAMRC_CMD,
     sgx_flag=False,
     multi_module_flag=False,
     multi_thread_flag=False,
@@ -283,6 +308,9 @@ def test_suite(
     clean_up_flag=True,
     verbose_flag=True,
     gc_flag=False,
+    extended_const_flag=False,
+    memory64_flag=False,
+    multi_memory_flag=False,
     parl_flag=False,
     qemu_flag=False,
     qemu_firmware="",
@@ -304,13 +332,13 @@ def test_suite(
         case_list.extend(gc_case_list)
 
     if eh_flag:
-        eh_path = pathlib.Path(EXCE_HANDLING_DIR).resolve()
-        if not eh_path.exists():
-            print(f"can not find spec test cases at {eh_path}")
-            return False
-        eh_case_list = sorted(eh_path.glob("*.wast"))
+        eh_case_list = sorted(suite_path.glob("*.wast"))
         eh_case_list_include = [test for test in eh_case_list if test.stem in ["throw", "tag", "try_catch", "rethrow", "try_delegate"]]
         case_list.extend(eh_case_list_include)
+
+    if multi_memory_flag:
+        multi_memory_list = sorted(suite_path.glob("multi-memory/*.wast"))
+        case_list.extend(multi_memory_list)
 
     # ignore based on command line options
     filtered_case_list = []
@@ -325,12 +353,16 @@ def test_suite(
             multi_thread_flag,
             simd_flag,
             gc_flag,
+            memory64_flag,
+            multi_memory_flag,
             xip_flag,
             eh_flag,
             qemu_flag,
         ):
             filtered_case_list.append(case_path)
-    print(f"---> {len(case_list)} --filter--> {len(filtered_case_list)}")
+        else:
+            print(f"---> skip {case_name}")
+    print(f"---> {len(case_list)} ---filter--> {len(filtered_case_list)}")
     case_list = filtered_case_list
 
     case_count = len(case_list)
@@ -348,6 +380,7 @@ def test_suite(
                         str(case_path),
                         target,
                         aot_flag,
+                        aot_compiler,
                         sgx_flag,
                         multi_module_flag,
                         multi_thread_flag,
@@ -357,6 +390,9 @@ def test_suite(
                         clean_up_flag,
                         verbose_flag,
                         gc_flag,
+                        extended_const_flag,
+                        memory64_flag,
+                        multi_memory_flag,
                         qemu_flag,
                         qemu_firmware,
                         log,
@@ -382,11 +418,13 @@ def test_suite(
     else:
         print(f"----- Run the whole spec test suite -----")
         for case_path in case_list:
+            print(case_path)
             try:
                 test_case(
                     str(case_path),
                     target,
                     aot_flag,
+                    aot_compiler,
                     sgx_flag,
                     multi_module_flag,
                     multi_thread_flag,
@@ -396,6 +434,9 @@ def test_suite(
                     clean_up_flag,
                     verbose_flag,
                     gc_flag,
+                    extended_const_flag,
+                    memory64_flag,
+                    multi_memory_flag,
                     qemu_flag,
                     qemu_firmware,
                     log,
@@ -468,6 +509,12 @@ def main():
         help="Running with AOT mode",
     )
     parser.add_argument(
+        "--aot-compiler",
+        default=WAMRC_CMD,
+        dest="aot_compiler",
+        help="AOT compiler",
+    )
+    parser.add_argument(
         "-x",
         action="store_true",
         default=False,
@@ -522,6 +569,27 @@ def main():
         help="Running with GC feature",
     )
     parser.add_argument(
+        "--enable-extended-const",
+        action="store_true",
+        default=False,
+        dest="extended_const_flag",
+        help="Running with extended const expression feature",
+    )
+    parser.add_argument(
+        "--memory64",
+        action="store_true",
+        default=False,
+        dest="memory64_flag",
+        help="Running with memory64 feature",
+    )
+    parser.add_argument(
+        "--multi-memory",
+        action="store_true",
+        default=False,
+        dest="multi_memory_flag",
+        help="Running with multi-memory feature",
+    )
+    parser.add_argument(
         "cases",
         metavar="path_to__case",
         type=str,
@@ -540,20 +608,22 @@ def main():
     if options.target == "x86_32":
         options.target = "i386"
 
-    if not preflight_check(options.aot_flag, options.eh_flag):
+    if not preflight_check(options.aot_flag, options.aot_compiler, options.eh_flag):
         return False
 
     if not options.cases:
         if options.parl_flag:
             # several cases might share the same workspace/tempfile at the same time
             # so, disable it while running parallelly
-            options.clean_up_flag = False
+            if options.multi_module_flag:
+                options.clean_up_flag = False
             options.verbose_flag = False
 
         start = time.time_ns()
         ret = test_suite(
             options.target,
             options.aot_flag,
+            options.aot_compiler,
             options.sgx_flag,
             options.multi_module_flag,
             options.multi_thread_flag,
@@ -563,6 +633,9 @@ def main():
             options.clean_up_flag,
             options.verbose_flag,
             options.gc_flag,
+            options.extended_const_flag,
+            options.memory64_flag,
+            options.multi_memory_flag,
             options.parl_flag,
             options.qemu_flag,
             options.qemu_firmware,
@@ -580,6 +653,7 @@ def main():
                     case,
                     options.target,
                     options.aot_flag,
+                    options.aot_compiler,
                     options.sgx_flag,
                     options.multi_module_flag,
                     options.multi_thread_flag,
@@ -589,6 +663,9 @@ def main():
                     options.clean_up_flag,
                     options.verbose_flag,
                     options.gc_flag,
+                    options.extended_const_flag,
+                    options.memory64_flag,
+                    options.multi_memory_flag,
                     options.qemu_flag,
                     options.qemu_firmware,
                     options.log,

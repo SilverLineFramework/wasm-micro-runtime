@@ -48,7 +48,7 @@ def query_llvm_version(llvm_info):
     return response['sha']
 
 
-def build_llvm(llvm_dir, platform, backends, projects, use_clang=False, extra_flags=''):
+def build_llvm(llvm_dir, platform, backends, projects, use_clang=False, extra_flags='', use_ccache=False):
     LLVM_COMPILE_OPTIONS = [
         '-DCMAKE_BUILD_TYPE:STRING="Release"',
         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
@@ -68,8 +68,8 @@ def build_llvm(llvm_dir, platform, backends, projects, use_clang=False, extra_fl
         "-DLLVM_OPTIMIZED_TABLEGEN:BOOL=ON",
     ]
 
-    # ccache is not available on Windows
-    if not "windows" == platform:
+    # ccache is opt-in via --use-ccache flag
+    if not "windows" == platform and use_ccache:
         LLVM_COMPILE_OPTIONS.append("-DLLVM_CCACHE_BUILD:BOOL=ON")
     # perf support is available on Linux only
     if "linux" == platform:
@@ -102,11 +102,20 @@ def build_llvm(llvm_dir, platform, backends, projects, use_clang=False, extra_fl
         "default": [],
     }
 
+    experimental_backends = ["ARC", "Xtensa"]
+    normal_backends = [s for s in backends if s not in experimental_backends]
+
     LLVM_TARGETS_TO_BUILD = [
-        '-DLLVM_TARGETS_TO_BUILD:STRING="' + ";".join(backends) + '"'
-        if backends
+        '-DLLVM_TARGETS_TO_BUILD:STRING="' + ";".join(normal_backends) + '"'
+        if normal_backends
         else '-DLLVM_TARGETS_TO_BUILD:STRING="AArch64;ARM;Mips;RISCV;X86"'
     ]
+
+    # if not on ARC platform, but want to add expeirmental backend ARC as target
+    if platform != "ARC" and "ARC" in backends:
+        LLVM_TARGETS_TO_BUILD.extend(
+            LLVM_EXTRA_COMPILE_OPTIONS["arc"]
+        )
 
     LLVM_PROJECTS_TO_BUILD = [
         '-DLLVM_ENABLE_PROJECTS:STRING="' + ";".join(projects) + '"' if projects else ""
@@ -125,9 +134,7 @@ def build_llvm(llvm_dir, platform, backends, projects, use_clang=False, extra_fl
     if not llvm_dir.exists():
         raise Exception(f"{llvm_dir} doesn't exist")
 
-    build_dir = llvm_dir.joinpath(
-        "win32build" if "windows" == platform else "build"
-    ).resolve()
+    build_dir = llvm_dir.joinpath("build").resolve()
     build_dir.mkdir(exist_ok=True)
 
     lib_llvm_core_library = build_dir.joinpath("lib/libLLVMCore.a").resolve()
@@ -156,11 +163,15 @@ def build_llvm(llvm_dir, platform, backends, projects, use_clang=False, extra_fl
             CONFIG_CMD += " -A x64"
     else:
         CONFIG_CMD += " -G'Ninja'"
+    print(f"Config command: {CONFIG_CMD}")
     subprocess.check_call(shlex.split(CONFIG_CMD), cwd=build_dir)
 
     BUILD_CMD = "cmake --build . --target package" + (
         " --config Release" if "windows" == platform else ""
     )
+    if "windows" == platform:
+        BUILD_CMD += " --parallel " + str(os.cpu_count())
+    print(f"Build command: {BUILD_CMD}")
     subprocess.check_call(shlex.split(BUILD_CMD), cwd=build_dir)
 
     return build_dir
@@ -174,6 +185,7 @@ def repackage_llvm(llvm_dir):
         raise Exception("Find more than one LLVM-*.tar.gz")
 
     if not packs:
+        raise Exception("Didn't find any LLVM-* package")
         return
 
     llvm_package = packs[0].name
@@ -189,6 +201,31 @@ def repackage_llvm(llvm_dir):
     # rm ./LLVM-1*.gz
     os.remove(llvm_dir.joinpath(llvm_package).resolve())
 
+def repackage_llvm_windows(llvm_dir):
+    build_dir = llvm_dir.joinpath("./build").resolve()
+
+    packs_path = [f for f in build_dir.glob("./_CPack_Packages/win64/NSIS/LLVM-*-win64")]
+    if len(packs_path) > 1:
+        raise Exception("Find more than one LLVM-* package")
+
+    if not packs_path:
+        raise Exception("Didn't find any LLVM-* package")
+        return
+
+    llvm_package_path = f"_CPack_Packages/win64/NSIS/{packs_path[0].name}"
+    windows_package_dir = build_dir.joinpath(llvm_package_path).resolve()
+
+    # mv package dir outside of build
+    shutil.move(str(windows_package_dir), str(llvm_dir))
+    # rm -r build
+    shutil.rmtree(str(build_dir))
+    # mkdir build
+    build_dir.mkdir()
+    # move back all the subdiretories under cpack directory(bin/include/lib) to build dir
+    moved_package_dir = llvm_dir.joinpath(packs_path[0].name)
+    for sub_dir in moved_package_dir.iterdir():
+        shutil.move(str(sub_dir), str(build_dir))
+    moved_package_dir.rmdir()
 
 def main():
     parser = argparse.ArgumentParser(description="build necessary LLVM libraries")
@@ -212,6 +249,7 @@ def main():
             "X86",
             "Xtensa",
         ],
+        default=[],
         help="identify LLVM supported backends, separate by space, like '--arch ARM Mips X86'",
     )
     parser.add_argument(
@@ -231,6 +269,11 @@ def main():
         "--use-clang",
         action="store_true",
         help="use clang instead of gcc",
+    )
+    parser.add_argument(
+        "--use-ccache",
+        action="store_true",
+        help="enable ccache for faster incremental LLVM builds (disabled by default to reduce CI storage consumption, recommended for local development)",
     )
     parser.add_argument(
         "--extra-cmake-flags",
@@ -256,17 +299,17 @@ def main():
         "arc": {
             "repo": "https://github.com/llvm/llvm-project.git",
             "repo_ssh": "git@github.com:llvm/llvm-project.git",
-            "branch": "release/15.x",
+            "branch": "release/18.x",
         },
         "xtensa": {
             "repo": "https://github.com/espressif/llvm-project.git",
             "repo_ssh": "git@github.com:espressif/llvm-project.git",
-            "branch": "xtensa_release_15.x",
+            "branch": "xtensa_release_18.1.2",
         },
         "default": {
             "repo": "https://github.com/llvm/llvm-project.git",
             "repo_ssh": "git@github.com:llvm/llvm-project.git",
-            "branch": "release/15.x",
+            "branch": "llvmorg-18.1.8",
         },
     }
 
@@ -296,11 +339,15 @@ def main():
         if (
             build_llvm(
                 llvm_dir, platform, options.arch, options.project, options.use_clang,
-                options.extra_cmake_flags
+                options.extra_cmake_flags, options.use_ccache
             )
             is not None
         ):
-            repackage_llvm(llvm_dir)
+            # TODO: repackage process may change in the future, this work for LLVM 15.x
+            if "windows" == platform:
+                repackage_llvm_windows(llvm_dir)
+            else:
+                repackage_llvm(llvm_dir)
 
         return True
     except subprocess.CalledProcessError:

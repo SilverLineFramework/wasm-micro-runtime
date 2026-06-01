@@ -8,7 +8,7 @@
 static char aot_error[128];
 
 char *
-aot_get_last_error()
+aot_get_last_error(void)
 {
     return aot_error[0] == '\0' ? "" : aot_error;
 }
@@ -36,8 +36,11 @@ aot_destroy_mem_init_data_list(AOTMemInitData **data_list, uint32 count)
 {
     uint32 i;
     for (i = 0; i < count; i++)
-        if (data_list[i])
+        if (data_list[i]) {
+            if (data_list[i]->bytes)
+                wasm_runtime_free(data_list[i]->bytes);
             wasm_runtime_free(data_list[i]);
+        }
     wasm_runtime_free(data_list);
 }
 
@@ -60,8 +63,7 @@ aot_create_mem_init_data_list(const WASMModule *module)
 
     /* Create each memory data segment */
     for (i = 0; i < module->data_seg_count; i++) {
-        size = offsetof(AOTMemInitData, bytes)
-               + (uint64)module->data_segments[i]->data_length;
+        size = sizeof(AOTMemInitData);
         if (size >= UINT32_MAX
             || !(data_list[i] = wasm_runtime_malloc((uint32)size))) {
             aot_set_last_error("allocate memory failed.");
@@ -69,18 +71,31 @@ aot_create_mem_init_data_list(const WASMModule *module)
         }
 
 #if WASM_ENABLE_BULK_MEMORY != 0
+        /* Set bulk memory specific properties if enabled */
         data_list[i]->is_passive = module->data_segments[i]->is_passive;
         data_list[i]->memory_index = module->data_segments[i]->memory_index;
 #endif
         data_list[i]->offset = module->data_segments[i]->base_offset;
         data_list[i]->byte_count = module->data_segments[i]->data_length;
-        memcpy(data_list[i]->bytes, module->data_segments[i]->data,
-               module->data_segments[i]->data_length);
+        data_list[i]->bytes = NULL;
+        /* Allocate memory for AOT compiler is OK, because the data segment
+         * is small and the host memory is enough */
+        if (data_list[i]->byte_count > 0) {
+            data_list[i]->bytes = wasm_runtime_malloc(data_list[i]->byte_count);
+            if (!data_list[i]->bytes) {
+                aot_set_last_error("allocate memory failed.");
+                goto fail;
+            }
+            /* Copy the actual data bytes from the WASM module */
+            memcpy(data_list[i]->bytes, module->data_segments[i]->data,
+                   module->data_segments[i]->data_length);
+        }
     }
 
     return data_list;
 
 fail:
+    /* Clean up allocated memory in case of failure */
     aot_destroy_mem_init_data_list(data_list, module->data_seg_count);
     return NULL;
 }
@@ -221,16 +236,16 @@ aot_create_import_globals(const WASMModule *module, bool gc_enabled,
         WASMGlobalImport *import_global = &module->import_globals[i].u.global;
         import_globals[i].module_name = import_global->module_name;
         import_globals[i].global_name = import_global->field_name;
-        import_globals[i].type = import_global->type;
-        import_globals[i].is_mutable = import_global->is_mutable;
+        import_globals[i].type.val_type = import_global->type.val_type;
+        import_globals[i].type.is_mutable = import_global->type.is_mutable;
         import_globals[i].global_data_linked =
             import_global->global_data_linked;
 
         import_globals[i].data_offset_64bit = data_offset_64bit;
         import_globals[i].data_offset_32bit = data_offset_32bit;
 
-        get_value_type_size(import_global->type, gc_enabled, &value_size_64bit,
-                            &value_size_32bit);
+        get_value_type_size(import_global->type.val_type, gc_enabled,
+                            &value_size_64bit, &value_size_32bit);
 
         import_globals[i].size_64bit = value_size_64bit;
         import_globals[i].size_32bit = value_size_32bit;
@@ -269,16 +284,16 @@ aot_create_globals(const WASMModule *module, bool gc_enabled,
     /* Create each global */
     for (i = 0; i < module->global_count; i++) {
         WASMGlobal *global = &module->globals[i];
-        globals[i].type = global->type;
-        globals[i].is_mutable = global->is_mutable;
+        globals[i].type.val_type = global->type.val_type;
+        globals[i].type.is_mutable = global->type.is_mutable;
         memcpy(&globals[i].init_expr, &global->init_expr,
                sizeof(global->init_expr));
 
         globals[i].data_offset_64bit = data_offset_64bit;
         globals[i].data_offset_32bit = data_offset_32bit;
 
-        get_value_type_size(global->type, gc_enabled, &value_size_64bit,
-                            &value_size_32bit);
+        get_value_type_size(global->type.val_type, gc_enabled,
+                            &value_size_64bit, &value_size_32bit);
 
         globals[i].size_64bit = value_size_64bit;
         globals[i].size_32bit = value_size_32bit;
@@ -401,6 +416,9 @@ aot_create_funcs(const WASMModule *module, uint32 pointer_size)
         aot_func->local_types_wp = func->local_types;
         aot_func->code = func->code;
         aot_func->code_size = func->code_size;
+#if WASM_ENABLE_BRANCH_HINTS != 0
+        aot_func->code_body_begin = func->code_body_begin;
+#endif
 
         /* Resolve local offsets */
         for (j = 0; j < func_type->param_count; j++) {
@@ -487,57 +505,68 @@ calculate_struct_field_sizes_offsets(AOTCompData *comp_data, bool is_target_x86,
 }
 #endif
 
-AOTCompData *
-aot_create_comp_data(WASMModule *module, const char *target_arch,
-                     bool gc_enabled)
+/**
+ * Checks if target architecture is 64-bit based on target_arch string.
+ *
+ * @param target_arch The target architecture string (e.g. "x86_64", "aarch64")
+ * @return true if target is 64-bit architecture, false otherwise
+ *
+ * If target_arch is NULL, detection is based on UINTPTR_MAX.
+ * Otherwise looks for "64" in target_arch string.
+ */
+static bool
+arch_is_64bit(const char *target_arch)
 {
-    AOTCompData *comp_data;
-    uint32 import_global_data_size_64bit = 0, global_data_size_64bit = 0, i, j;
-    uint32 import_global_data_size_32bit = 0, global_data_size_32bit = 0;
-    uint64 size;
-    bool is_64bit_target = false;
-#if WASM_ENABLE_GC != 0
-    bool is_target_x86 = false;
+    if (!target_arch) {
+#if UINTPTR_MAX == UINT64_MAX
+        return true;
+#else
+        return false;
 #endif
+    }
+    /* All 64bit targets contains "64" string in their target name */
+    return strstr(target_arch, "64") != NULL;
+}
 
-#if WASM_ENABLE_GC != 0
+/**
+ * Checks if target architecture is x86/x64 based on target_arch string.
+ *
+ * @param target_arch The target architecture string (e.g. "x86_64", "i386")
+ * @return true if target is x86/x64 architecture, false otherwise
+ *
+ * If target_arch is NULL, detection is based on build-time definitions.
+ * Otherwise checks for x86_64 or i386 in target_arch string.
+ */
+static bool
+arch_is_x86(const char *target_arch)
+{
     if (!target_arch) {
 #if defined(BUILD_TARGET_X86_64) || defined(BUILD_TARGET_AMD_64) \
     || defined(BUILD_TARGET_X86_32)
-        is_target_x86 = true;
+        return true;
+#else
+        return false;
 #endif
     }
-    else {
-        if (!strncmp(target_arch, "x86_64", 6)
-            || !strncmp(target_arch, "i386", 4))
-            is_target_x86 = true;
-    }
-#endif
+    return !strncmp(target_arch, "x86_64", 6)
+           || !strncmp(target_arch, "i386", 4);
+}
 
-    if (!target_arch) {
-#if UINTPTR_MAX == UINT64_MAX
-        is_64bit_target = true;
-#endif
-    }
-    else {
-        /* All 64bit targets contains "64" string in their target name */
-        if (strstr(target_arch, "64") != NULL) {
-            is_64bit_target = true;
-        }
-    }
-
-    /* Allocate memory */
-    if (!(comp_data = wasm_runtime_malloc(sizeof(AOTCompData)))) {
-        aot_set_last_error("create compile data failed.\n");
-        return NULL;
-    }
-
-    memset(comp_data, 0, sizeof(AOTCompData));
+/**
+ * Initialize memory information in AOT compilation data from WASM module.
+ *
+ * @param comp_data the AOT compilation data structure to initialize
+ * @param module the source WASM module containing memory information
+ * @return true if initialization succeeded, false otherwise
+ */
+static bool
+aot_init_memories(AOTCompData *comp_data, WASMModule *module)
+{
+    uint32 i, j;
+    uint64 size;
 
     comp_data->memory_count =
         module->import_memory_count + module->memory_count;
-
-    /* TODO: create import memories */
 
     /* Allocate memory for memory array, reserve one AOTMemory space at least */
     if (!comp_data->memory_count)
@@ -547,7 +576,7 @@ aot_create_comp_data(WASMModule *module, const char *target_arch,
     if (size >= UINT32_MAX
         || !(comp_data->memories = wasm_runtime_malloc((uint32)size))) {
         aot_set_last_error("create memories array failed.\n");
-        goto fail;
+        return false;
     }
     memset(comp_data->memories, 0, size);
 
@@ -558,79 +587,85 @@ aot_create_comp_data(WASMModule *module, const char *target_arch,
     /* Set memory page count */
     for (i = 0; i < module->import_memory_count + module->memory_count; i++) {
         if (i < module->import_memory_count) {
-            comp_data->memories[i].memory_flags =
-                module->import_memories[i].u.memory.flags;
+            comp_data->memories[i].flags =
+                module->import_memories[i].u.memory.mem_type.flags;
             comp_data->memories[i].num_bytes_per_page =
-                module->import_memories[i].u.memory.num_bytes_per_page;
-            comp_data->memories[i].mem_init_page_count =
-                module->import_memories[i].u.memory.init_page_count;
-            comp_data->memories[i].mem_max_page_count =
-                module->import_memories[i].u.memory.max_page_count;
-            comp_data->memories[i].num_bytes_per_page =
-                module->import_memories[i].u.memory.num_bytes_per_page;
+                module->import_memories[i].u.memory.mem_type.num_bytes_per_page;
+            comp_data->memories[i].init_page_count =
+                module->import_memories[i].u.memory.mem_type.init_page_count;
+            comp_data->memories[i].max_page_count =
+                module->import_memories[i].u.memory.mem_type.max_page_count;
         }
         else {
             j = i - module->import_memory_count;
-            comp_data->memories[i].memory_flags = module->memories[j].flags;
+            comp_data->memories[i].flags = module->memories[j].flags;
             comp_data->memories[i].num_bytes_per_page =
                 module->memories[j].num_bytes_per_page;
-            comp_data->memories[i].mem_init_page_count =
+            comp_data->memories[i].init_page_count =
                 module->memories[j].init_page_count;
-            comp_data->memories[i].mem_max_page_count =
+            comp_data->memories[i].max_page_count =
                 module->memories[j].max_page_count;
-            comp_data->memories[i].num_bytes_per_page =
-                module->memories[j].num_bytes_per_page;
         }
     }
 
-    /* Create memory data segments */
-    comp_data->mem_init_data_count = module->data_seg_count;
-    if (comp_data->mem_init_data_count > 0
-        && !(comp_data->mem_init_data_list =
-                 aot_create_mem_init_data_list(module)))
-        goto fail;
+    return true;
+}
 
-    /* Create tables */
+/**
+ * Initialize table information in AOT compilation data from WASM module.
+ *
+ * @param comp_data the AOT compilation data structure to initialize
+ * @param module the source WASM module containing table information
+ * @return true if initialization succeeded, false otherwise
+ */
+static bool
+aot_init_tables(AOTCompData *comp_data, WASMModule *module)
+{
+    uint32 i, j;
+    uint64 size;
+
     comp_data->table_count = module->import_table_count + module->table_count;
 
     if (comp_data->table_count > 0) {
         size = sizeof(AOTTable) * (uint64)comp_data->table_count;
         if (size >= UINT32_MAX
             || !(comp_data->tables = wasm_runtime_malloc((uint32)size))) {
-            aot_set_last_error("create memories array failed.\n");
-            goto fail;
+            aot_set_last_error("create tables array failed.\n");
+            return false;
         }
         memset(comp_data->tables, 0, size);
         for (i = 0; i < comp_data->table_count; i++) {
             if (i < module->import_table_count) {
-                comp_data->tables[i].elem_type =
-                    module->import_tables[i].u.table.elem_type;
-                comp_data->tables[i].table_flags =
-                    module->import_tables[i].u.table.flags;
-                comp_data->tables[i].table_init_size =
-                    module->import_tables[i].u.table.init_size;
-                comp_data->tables[i].table_max_size =
-                    module->import_tables[i].u.table.max_size;
+                comp_data->tables[i].table_type.elem_type =
+                    module->import_tables[i].u.table.table_type.elem_type;
+                comp_data->tables[i].table_type.flags =
+                    module->import_tables[i].u.table.table_type.flags;
+                comp_data->tables[i].table_type.init_size =
+                    module->import_tables[i].u.table.table_type.init_size;
+                comp_data->tables[i].table_type.max_size =
+                    module->import_tables[i].u.table.table_type.max_size;
 #if WASM_ENABLE_GC != 0
-                comp_data->tables[i].elem_ref_type =
-                    module->import_tables[i].u.table.elem_ref_type;
+                comp_data->tables[i].table_type.elem_ref_type =
+                    module->import_tables[i].u.table.table_type.elem_ref_type;
 #endif
-                comp_data->tables[i].possible_grow =
-                    module->import_tables[i].u.table.possible_grow;
+                comp_data->tables[i].table_type.possible_grow =
+                    module->import_tables[i].u.table.table_type.possible_grow;
             }
             else {
                 j = i - module->import_table_count;
-                comp_data->tables[i].elem_type = module->tables[j].elem_type;
-                comp_data->tables[i].table_flags = module->tables[j].flags;
-                comp_data->tables[i].table_init_size =
-                    module->tables[j].init_size;
-                comp_data->tables[i].table_max_size =
-                    module->tables[j].max_size;
-                comp_data->tables[i].possible_grow =
-                    module->tables[j].possible_grow;
+                comp_data->tables[i].table_type.elem_type =
+                    module->tables[j].table_type.elem_type;
+                comp_data->tables[i].table_type.flags =
+                    module->tables[j].table_type.flags;
+                comp_data->tables[i].table_type.init_size =
+                    module->tables[j].table_type.init_size;
+                comp_data->tables[i].table_type.max_size =
+                    module->tables[j].table_type.max_size;
+                comp_data->tables[i].table_type.possible_grow =
+                    module->tables[j].table_type.possible_grow;
 #if WASM_ENABLE_GC != 0
-                comp_data->tables[j].elem_ref_type =
-                    module->tables[j].elem_ref_type;
+                comp_data->tables[j].table_type.elem_ref_type =
+                    module->tables[j].table_type.elem_ref_type;
                 /* Note: if the init_expr contains extra data for struct/array
                  * initialization information (init_expr.u.data), the pointer is
                  * copied.
@@ -642,64 +677,150 @@ aot_create_comp_data(WASMModule *module, const char *target_arch,
         }
     }
 
-    /* Create table data segments */
+    return true;
+}
+
+/**
+ * Initialize memory segment information in AOT compilation data.
+ *
+ * @param comp_data the AOT compilation data structure to initialize
+ * @param module the source WASM module containing memory segments
+ * @return true if initialization succeeded, false otherwise
+ */
+static bool
+aot_init_memory_segments(AOTCompData *comp_data, WASMModule *module)
+{
+    comp_data->mem_init_data_count = module->data_seg_count;
+    if (comp_data->mem_init_data_count > 0
+        && !(comp_data->mem_init_data_list =
+                 aot_create_mem_init_data_list(module))) {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Initialize table segment information in AOT compilation data.
+ *
+ * @param comp_data the AOT compilation data structure to initialize
+ * @param module the source WASM module containing table segments
+ * @return true if initialization succeeded, false otherwise
+ */
+static bool
+aot_init_table_segments(AOTCompData *comp_data, WASMModule *module)
+{
     comp_data->table_init_data_count = module->table_seg_count;
     if (comp_data->table_init_data_count > 0
         && !(comp_data->table_init_data_list =
-                 aot_create_table_init_data_list(module)))
-        goto fail;
+                 aot_create_table_init_data_list(module))) {
+        return false;
+    }
+    return true;
+}
 
-    /* Create import globals */
+/**
+ * Initialize global variable information in AOT compilation data.
+ *
+ * @param comp_data the AOT compilation data structure to initialize
+ * @param module the source WASM module containing global information
+ * @param gc_enabled whether garbage collection is enabled
+ * @param import_global_data_size_64bit [out] size of imported global data for
+ * 64-bit
+ * @param import_global_data_size_32bit [out] size of imported global data for
+ * 32-bit
+ * @param global_data_size_64bit [out] size of global data for 64-bit
+ * @param global_data_size_32bit [out] size of global data for 32-bit
+ * @return true if initialization succeeded, false otherwise
+ */
+static bool
+aot_init_globals(AOTCompData *comp_data, WASMModule *module, bool gc_enabled,
+                 uint32 *import_global_data_size_64bit,
+                 uint32 *import_global_data_size_32bit,
+                 uint32 *global_data_size_64bit, uint32 *global_data_size_32bit)
+{
     comp_data->import_global_count = module->import_global_count;
     if (comp_data->import_global_count > 0
         && !(comp_data->import_globals = aot_create_import_globals(
-                 module, gc_enabled, &import_global_data_size_64bit,
-                 &import_global_data_size_32bit)))
-        goto fail;
+                 module, gc_enabled, import_global_data_size_64bit,
+                 import_global_data_size_32bit))) {
+        return false;
+    }
 
-    /* Create globals */
     comp_data->global_count = module->global_count;
     if (comp_data->global_count
         && !(comp_data->globals = aot_create_globals(
-                 module, gc_enabled, import_global_data_size_64bit,
-                 import_global_data_size_32bit, &global_data_size_64bit,
-                 &global_data_size_32bit)))
-        goto fail;
+                 module, gc_enabled, *import_global_data_size_64bit,
+                 *import_global_data_size_32bit, global_data_size_64bit,
+                 global_data_size_32bit))) {
+        return false;
+    }
 
     comp_data->global_data_size_64bit =
-        import_global_data_size_64bit + global_data_size_64bit;
+        *import_global_data_size_64bit + *global_data_size_64bit;
     comp_data->global_data_size_32bit =
-        import_global_data_size_32bit + global_data_size_32bit;
+        *import_global_data_size_32bit + *global_data_size_32bit;
 
-    /* Create types, they are checked by wasm loader */
+    return true;
+}
+
+/**
+ * Initialize type information in AOT compilation data.
+ *
+ * @param comp_data the AOT compilation data structure to initialize
+ * @param module the source WASM module containing type information
+ * @param is_target_x86 whether the target architecture is x86
+ * @param gc_enabled whether garbage collection is enabled
+ * @return true if initialization succeeded, false otherwise
+ */
+static bool
+aot_init_types(AOTCompData *comp_data, WASMModule *module, bool is_target_x86,
+               bool gc_enabled)
+{
     comp_data->type_count = module->type_count;
     comp_data->types = module->types;
 #if WASM_ENABLE_GC != 0
-    /* Calculate the field sizes and field offsets for 64-bit and 32-bit
-       targets since they may vary in 32-bit target and 64-bit target */
     calculate_struct_field_sizes_offsets(comp_data, is_target_x86, gc_enabled);
 #endif
+    return true;
+}
 
-    /* Create import functions */
+/**
+ * Initialize function information in AOT compilation data.
+ *
+ * @param comp_data the AOT compilation data structure to initialize
+ * @param module the source WASM module containing function information
+ * @param is_64bit_target whether the target architecture is 64-bit
+ * @return true if initialization succeeded, false otherwise
+ */
+static bool
+aot_init_functions(AOTCompData *comp_data, WASMModule *module,
+                   bool is_64bit_target)
+{
     comp_data->import_func_count = module->import_function_count;
     if (comp_data->import_func_count
-        && !(comp_data->import_funcs = aot_create_import_funcs(module)))
-        goto fail;
+        && !(comp_data->import_funcs = aot_create_import_funcs(module))) {
+        return false;
+    }
 
-    /* Create functions */
     comp_data->func_count = module->function_count;
     if (comp_data->func_count
         && !(comp_data->funcs =
-                 aot_create_funcs(module, is_64bit_target ? 8 : 4)))
-        goto fail;
+                 aot_create_funcs(module, is_64bit_target ? 8 : 4))) {
+        return false;
+    }
 
-#if WASM_ENABLE_CUSTOM_NAME_SECTION != 0
-    /* Create custom name section */
-    comp_data->name_section_buf = module->name_section_buf;
-    comp_data->name_section_buf_end = module->name_section_buf_end;
-#endif
+    return true;
+}
 
-    /* Create aux data/heap/stack information */
+/**
+ * Initialize auxiliary data in AOT compilation data.
+ *
+ * @param comp_data the AOT compilation data structure to initialize
+ * @param module the source WASM module containing auxiliary data
+ */
+static void
+aot_init_aux_data(AOTCompData *comp_data, WASMModule *module)
+{
     comp_data->aux_data_end_global_index = module->aux_data_end_global_index;
     comp_data->aux_data_end = module->aux_data_end;
     comp_data->aux_heap_base_global_index = module->aux_heap_base_global_index;
@@ -718,6 +839,47 @@ aot_create_comp_data(WASMModule *module, const char *target_arch,
     comp_data->string_literal_ptrs_wp = module->string_literal_ptrs;
     comp_data->string_literal_lengths_wp = module->string_literal_lengths;
 #endif
+}
+
+AOTCompData *
+aot_create_comp_data(WASMModule *module, const char *target_arch,
+                     bool gc_enabled)
+{
+    AOTCompData *comp_data;
+    uint32 import_global_data_size_64bit = 0, global_data_size_64bit = 0;
+    uint32 import_global_data_size_32bit = 0, global_data_size_32bit = 0;
+    bool is_64bit_target = arch_is_64bit(target_arch);
+    bool is_target_x86 = arch_is_x86(target_arch);
+
+    if (!(comp_data = wasm_runtime_malloc(sizeof(AOTCompData)))) {
+        aot_set_last_error("create compile data failed.\n");
+        return NULL;
+    }
+    memset(comp_data, 0, sizeof(AOTCompData));
+
+    if (!aot_init_memories(comp_data, module)
+        || !aot_init_memory_segments(comp_data, module)
+        || !aot_init_tables(comp_data, module)
+        || !aot_init_table_segments(comp_data, module)
+        || !aot_init_globals(comp_data, module, gc_enabled,
+                             &import_global_data_size_64bit,
+                             &import_global_data_size_32bit,
+                             &global_data_size_64bit, &global_data_size_32bit)
+        || !aot_init_types(comp_data, module, is_target_x86, gc_enabled)
+        || !aot_init_functions(comp_data, module, is_64bit_target)) {
+        goto fail;
+    }
+
+#if WASM_ENABLE_CUSTOM_NAME_SECTION != 0
+    comp_data->name_section_buf = module->name_section_buf;
+    comp_data->name_section_buf_end = module->name_section_buf_end;
+#endif
+
+#if WASM_ENABLE_BRANCH_HINTS != 0
+    comp_data->function_hints = module->function_hints;
+#endif
+
+    aot_init_aux_data(comp_data, module);
 
     comp_data->wasm_module = module;
 

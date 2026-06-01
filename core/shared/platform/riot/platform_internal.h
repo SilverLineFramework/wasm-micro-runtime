@@ -63,6 +63,9 @@ typedef struct korp_cond {
 typedef int os_file_handle;
 typedef void *os_dir_stream;
 typedef int os_raw_file_handle;
+typedef int os_poll_file_handle;
+typedef unsigned int os_nfds_t;
+typedef int os_timespec;
 
 #if WA_MATH
 /* clang-format off */
@@ -83,15 +86,27 @@ float fmaxf(float x, float y);
 float rintf(float x);
 float fabsf(float x);
 float truncf(float x);
-int signbit(double x);
-int isnan(double x);
+int isnan_double(double x);
+int isnan_float(float x);
+int signbit_double(double x);
+int signbit_float(float x);
+#define isnan(x) (sizeof(x) == sizeof(double) ? isnan_double((double)x) : isnan_float(x))
+#define signbit(x) (sizeof(x) == sizeof(double) ? signbit_double((double)x) : signbit_float(x))
 /* clang-format on */
 #endif
 
 static inline os_file_handle
-os_get_invalid_handle()
+os_get_invalid_handle(void)
 {
     return -1;
+}
+
+/* There is no MMU in RIOT so the function return 1024 to make the compiler
+   happy */
+static inline int
+os_getpagesize()
+{
+    return 1024;
 }
 
 #endif /* end of _BH_PLATFORM_H */

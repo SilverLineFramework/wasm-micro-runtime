@@ -29,7 +29,7 @@ typedef struct {
 } ThreadStartArg;
 
 static int32
-allocate_thread_id()
+allocate_thread_id(void)
 {
     os_mutex_lock(&thread_id_lock);
     int32 id = tid_allocator_get_tid(&tid_allocator);
@@ -80,18 +80,20 @@ thread_spawn_wrapper(wasm_exec_env_t exec_env, uint32 start_arg)
     int32 thread_id;
     uint32 stack_size = 8192;
     int32 ret = -1;
+    struct InstantiationArgs2 args;
 
     bh_assert(module);
     bh_assert(module_inst);
 
     stack_size = ((WASMModuleInstance *)module_inst)->default_wasm_stack_size;
 
+    wasm_runtime_instantiation_args_set_defaults(&args);
+    wasm_runtime_instantiation_args_set_default_stack_size(&args, stack_size);
+    wasm_runtime_instantiation_args_set_custom_data(
+        &args, wasm_runtime_get_custom_data(module_inst));
     if (!(new_module_inst = wasm_runtime_instantiate_internal(
-              module, module_inst, exec_env, stack_size, 0, 0, NULL, 0)))
+              module, module_inst, exec_env, &args, NULL, 0)))
         return -1;
-
-    wasm_runtime_set_custom_data_internal(
-        new_module_inst, wasm_runtime_get_custom_data(module_inst));
 
     if (!(wasm_cluster_dup_c_api_imports(new_module_inst, module_inst)))
         goto thread_preparation_fail;

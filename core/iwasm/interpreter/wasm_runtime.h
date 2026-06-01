@@ -13,10 +13,6 @@
 #include "../common/wasm_runtime_common.h"
 #include "../common/wasm_exec_env.h"
 
-#if WASM_ENABLE_WASI_NN != 0
-#include "../libraries/wasi-nn/src/wasi_nn_private.h"
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -96,6 +92,24 @@ typedef union {
     uint32 u32[2];
 } MemBound;
 
+typedef struct WASMSharedHeap {
+    /* The global shared heap list maintained in runtime, used for runtime
+     * destroy */
+    DefPointer(struct WASMSharedHeap *, next);
+    /* The logical shared heap chain the shared heap in */
+    DefPointer(struct WASMSharedHeap *, chain_next);
+    /* Will be null if shared heap is created from pre allocated memory chunk
+     * and don't need to dynamic malloc and free */
+    DefPointer(void *, heap_handle);
+    DefPointer(uint8 *, base_addr);
+    uint64 size;
+    uint64 start_off_mem64;
+    uint64 start_off_mem32;
+    /* The number of wasm apps it attached to, for a shared heap chain, only the
+     * list head need to maintain the valid attached_count */
+    uint8 attached_count;
+} WASMSharedHeap;
+
 struct WASMMemoryInstance {
     /* Module type */
     uint32 module_type;
@@ -103,7 +117,7 @@ struct WASMMemoryInstance {
     /* Whether the memory is shared */
     uint8 is_shared_memory;
 
-    /* TODO: Memory64 whether the memory has 64-bit memory addresses */
+    /* Whether the memory has 64-bit memory addresses */
     uint8 is_memory64;
 
     /* Reference count of the memory instance:
@@ -112,7 +126,7 @@ struct WASMMemoryInstance {
 
     /* Four-byte paddings to ensure the layout of WASMMemoryInstance is the same
      * in both 64-bit and 32-bit */
-    uint8 __paddings[4];
+    uint8 _paddings[4];
 
     /* Number bytes per page */
     uint32 num_bytes_per_page;
@@ -163,7 +177,8 @@ struct WASMMemoryInstance {
 struct WASMTableInstance {
     /* The element type */
     uint8 elem_type;
-    uint8 __padding__[7];
+    uint8 is_table64;
+    uint8 __padding__[6];
     union {
 #if WASM_ENABLE_GC != 0
         WASMRefType *elem_ref_type;
@@ -321,6 +336,9 @@ typedef struct WASMModuleInstanceExtraCommon {
     /* The gc heap created */
     void *gc_heap_handle;
 #endif
+#if WASM_ENABLE_THREAD_MGR != 0
+    korp_mutex exception_lock;
+#endif
 } WASMModuleInstanceExtraCommon;
 
 /* Extra info of WASM module instance for interpreter/jit mode */
@@ -357,6 +375,18 @@ typedef struct WASMModuleInstanceExtra {
 
 #if WASM_ENABLE_MEMORY_PROFILING != 0
     uint32 max_aux_stack_used;
+#endif
+
+#if WASM_ENABLE_SHARED_HEAP != 0
+    /*
+     * Adjusted shared heap based addr to simple the calculation
+     * in the aot code. The value is:
+     *   shared_heap->base_addr - shared_heap->start_off
+     */
+    uint8 *shared_heap_base_addr_adj;
+    MemBound shared_heap_start_off;
+    MemBound shared_heap_end_off;
+    WASMSharedHeap *shared_heap;
 #endif
 
 #if WASM_ENABLE_DEBUG_INTERP != 0                         \
@@ -518,7 +548,7 @@ wasm_load(uint8 *buf, uint32 size,
 #if WASM_ENABLE_MULTI_MODULE != 0
           bool main_module,
 #endif
-          char *error_buf, uint32 error_buf_size);
+          const LoadArgs *args, char *error_buf, uint32 error_buf_size);
 
 WASMModule *
 wasm_load_from_sections(WASMSection *section_list, char *error_buf,
@@ -527,10 +557,17 @@ wasm_load_from_sections(WASMSection *section_list, char *error_buf,
 void
 wasm_unload(WASMModule *module);
 
+bool
+wasm_resolve_symbols(WASMModule *module);
+
+bool
+wasm_resolve_import_func(const WASMModule *module,
+                         WASMFunctionImport *function);
+
 WASMModuleInstance *
 wasm_instantiate(WASMModule *module, WASMModuleInstance *parent,
-                 WASMExecEnv *exec_env_main, uint32 stack_size,
-                 uint32 heap_size, uint32 max_memory_pages, char *error_buf,
+                 WASMExecEnv *exec_env_main,
+                 const struct InstantiationArgs2 *args, char *error_buf,
                  uint32 error_buf_size);
 
 void
@@ -553,12 +590,12 @@ wasm_set_running_mode(WASMModuleInstance *module_inst,
 WASMFunctionInstance *
 wasm_lookup_function(const WASMModuleInstance *module_inst, const char *name);
 
+WASMMemoryInstance *
+wasm_lookup_memory(const WASMModuleInstance *module_inst, const char *name);
+
 #if WASM_ENABLE_MULTI_MODULE != 0
 WASMGlobalInstance *
 wasm_lookup_global(const WASMModuleInstance *module_inst, const char *name);
-
-WASMMemoryInstance *
-wasm_lookup_memory(const WASMModuleInstance *module_inst, const char *name);
 
 WASMTableInstance *
 wasm_lookup_table(const WASMModuleInstance *module_inst, const char *name);
@@ -634,6 +671,9 @@ wasm_check_app_addr_and_convert(WASMModuleInstance *module_inst, bool is_str,
 WASMMemoryInstance *
 wasm_get_default_memory(WASMModuleInstance *module_inst);
 
+WASMMemoryInstance *
+wasm_get_memory_with_idx(WASMModuleInstance *module_inst, uint32 index);
+
 bool
 wasm_can_enlarge_memory(WASMModuleInstance *module_inst, uint32 inc_page_count);
 
@@ -644,6 +684,10 @@ wasm_enlarge_memory(WASMModuleInstance *module_inst, uint32 inc_page_count,
 WASMFunctionInstance *
 wasm_get_indirect_function(WASMModuleInstance *module_inst, uint32 tbl_idx,
                            uint32 elem_idx);
+
+bool
+wasm_enlarge_memory_with_idx(WASMModuleInstance *module_inst,
+                             uint32 inc_page_count, uint32 memidx, bool pre_mapped);
 
 bool
 wasm_call_indirect(WASMExecEnv *exec_env, uint32 tbl_idx, uint32 elem_idx,
@@ -715,6 +759,14 @@ wasm_get_table_inst(const WASMModuleInstance *module_inst, uint32 tbl_idx)
 }
 
 #if WASM_ENABLE_DUMP_CALL_STACK != 0
+
+#if WASM_ENABLE_COPY_CALL_STACK != 0
+uint32
+wasm_interp_copy_callstack(WASMExecEnv *exec_env, WASMCApiFrame *buffer,
+                           uint32 length, uint32 skip_n, char *error_buf,
+                           uint32_t error_buf_size);
+#endif // WASM_ENABLE_COPY_CALL_STACK
+
 bool
 wasm_interp_create_call_stack(struct WASMExecEnv *exec_env);
 
@@ -778,7 +830,7 @@ llvm_jit_invoke_native(WASMExecEnv *exec_env, uint32 func_idx, uint32 argc,
 #if WASM_ENABLE_BULK_MEMORY != 0
 bool
 llvm_jit_memory_init(WASMModuleInstance *module_inst, uint32 seg_index,
-                     uint32 offset, uint32 len, uint32 dst);
+                     uint32 offset, uint32 len, size_t dst);
 
 bool
 llvm_jit_data_drop(WASMModuleInstance *module_inst, uint32 seg_index);
@@ -828,6 +880,11 @@ llvm_jit_create_func_obj(WASMModuleInstance *module_inst, uint32 func_idx,
 bool
 llvm_jit_obj_is_instance_of(WASMModuleInstance *module_inst,
                             WASMObjectRef gc_obj, uint32 type_index);
+
+/* Whether func type1 is one of super types of func type2 */
+bool
+llvm_jit_func_type_is_super_of(WASMModuleInstance *module_inst,
+                               uint32 type_idx1, uint32 type_idx2);
 
 WASMRttTypeRef
 llvm_jit_rtt_type_new(WASMModuleInstance *module_inst, uint32 type_index);

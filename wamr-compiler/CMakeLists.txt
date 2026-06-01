@@ -31,22 +31,32 @@ endif()
 set (CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "")
 set (CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS "")
 
+# Turn on SIMD by default, can be turned off by setting WAMR_BUILD_SIMD to 0
+if (WAMR_BUILD_SIMD EQUAL 0)
+  add_definitions(-DWASM_ENABLE_SIMD=0)
+else()
+  add_definitions(-DWASM_ENABLE_SIMD=1)
+endif()
+
 add_definitions(-DWASM_ENABLE_INTERP=1)
 add_definitions(-DWASM_ENABLE_WAMR_COMPILER=1)
 add_definitions(-DWASM_ENABLE_BULK_MEMORY=1)
-add_definitions(-DWASM_DISABLE_HW_BOUND_CHECK=0)
-add_definitions(-DWASM_ENABLE_MULTI_MODULE=1)
+add_definitions(-DWASM_ENABLE_BULK_MEMORY_OPT=1)
+add_definitions(-DWASM_DISABLE_HW_BOUND_CHECK=1)
 add_definitions(-DWASM_ENABLE_SHARED_MEMORY=1)
 add_definitions(-DWASM_ENABLE_THREAD_MGR=1)
 add_definitions(-DWASM_ENABLE_TAIL_CALL=1)
-add_definitions(-DWASM_ENABLE_SIMD=1)
 add_definitions(-DWASM_ENABLE_REF_TYPES=1)
+add_definitions(-DWASM_ENABLE_CALL_INDIRECT_OVERLONG=1)
+add_definitions(-DWASM_ENABLE_BRANCH_HINTS=1)
 add_definitions(-DWASM_ENABLE_CUSTOM_NAME_SECTION=1)
 add_definitions(-DWASM_ENABLE_AOT_STACK_FRAME=1)
 add_definitions(-DWASM_ENABLE_DUMP_CALL_STACK=1)
 add_definitions(-DWASM_ENABLE_PERF_PROFILING=1)
 add_definitions(-DWASM_ENABLE_LOAD_CUSTOM_SECTION=1)
 add_definitions(-DWASM_ENABLE_MODULE_INST_CONTEXT=1)
+add_definitions(-DWASM_ENABLE_MEMORY64=1)
+add_definitions(-DWASM_ENABLE_EXTENDED_CONST_EXPR=1)
 
 add_definitions(-DWASM_ENABLE_GC=1)
 
@@ -61,6 +71,7 @@ if (WAMR_BUILD_LLVM_LEGACY_PM EQUAL 1)
 endif ()
 
 if (LINUX)
+  set(WAMR_BUILD_LINUX_PERF 1)
   add_definitions(-DWASM_ENABLE_LINUX_PERF=1)
 endif ()
 
@@ -124,6 +135,8 @@ elseif (WAMR_BUILD_TARGET STREQUAL "RISCV64_LP64")
   add_definitions(-DBUILD_TARGET_RISCV64_LP64)
 elseif (WAMR_BUILD_TARGET STREQUAL "RISCV32" OR WAMR_BUILD_TARGET STREQUAL "RISCV32_ILP32D")
   add_definitions(-DBUILD_TARGET_RISCV32_ILP32D)
+elseif (WAMR_BUILD_TARGET STREQUAL  "RISCV32_ILP32F")
+  add_definitions(-DBUILD_TARGET_RISCV32_ILP32F)
 elseif (WAMR_BUILD_TARGET STREQUAL "RISCV32_ILP32")
   add_definitions(-DBUILD_TARGET_RISCV32_ILP32)
 else ()
@@ -132,21 +145,11 @@ endif ()
 
 message ("-- Build as target ${WAMR_BUILD_TARGET}")
 
-if (CMAKE_SIZEOF_VOID_P EQUAL 8)
-    if (WAMR_BUILD_TARGET STREQUAL "X86_64" OR WAMR_BUILD_TARGET STREQUAL "AMD_64"
-        OR WAMR_BUILD_TARGET MATCHES "AARCH64.*" OR WAMR_BUILD_TARGET MATCHES "RISCV64.*")
-    if (NOT WAMR_BUILD_PLATFORM STREQUAL "windows")
-      # Add -fPIC flag if build as 64-bit
-      set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
-      set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
-      set (CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "${CMAKE_SHARED_LIBRARY_LINK_C_FLAGS} -fPIC")
-      set (CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS "${CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS} -fPIC")
-    endif ()
-  else ()
-    add_definitions (-m32)
-    set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -m32")
-    set (CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -m32")
-  endif ()
+# Add -m32 flag if compiling on 64-bit system for 32-bit x86 target
+if (CMAKE_SIZEOF_VOID_P EQUAL 8 AND WAMR_BUILD_TARGET STREQUAL "X86_32")
+  add_definitions (-m32)
+  set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -m32")
+  set (CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -m32")
 endif ()
 
 if (NOT CMAKE_BUILD_TYPE)
@@ -162,23 +165,21 @@ if (WAMR_BUILD_DEBUG_AOT EQUAL 1)
 endif()
 
 # Enable LLVM
+# In Debug mode, always use release builds of pre-built dependency libraries
+if (WAMR_BUILD_PLATFORM STREQUAL "windows" AND MSVC)
+  add_compile_options($<$<CONFIG:Debug>:/MD>)
+endif()
+
 if (NOT WAMR_BUILD_WITH_CUSTOM_LLVM)
   set (LLVM_SRC_ROOT "${PROJECT_SOURCE_DIR}/../core/deps/llvm")
-  if (WAMR_BUILD_PLATFORM STREQUAL "windows")
-    if (NOT EXISTS "${LLVM_SRC_ROOT}/win32build")
-      message (FATAL_ERROR "Cannot find LLVM dir: ${LLVM_SRC_ROOT}/win32build")
-    endif ()
-    set (CMAKE_PREFIX_PATH "${LLVM_SRC_ROOT}/win32build;${CMAKE_PREFIX_PATH}")
-  else()
-    if (NOT EXISTS "${LLVM_SRC_ROOT}/build")
-      message (FATAL_ERROR "Cannot find LLVM dir: ${LLVM_SRC_ROOT}/build")
-    endif ()
-    set (CMAKE_PREFIX_PATH "${LLVM_SRC_ROOT}/build;${CMAKE_PREFIX_PATH}")
+  if (NOT EXISTS "${LLVM_SRC_ROOT}/build")
+    message (FATAL_ERROR "Cannot find LLVM dir: ${LLVM_SRC_ROOT}/build")
   endif ()
+  set (CMAKE_PREFIX_PATH "${LLVM_SRC_ROOT}/build;${CMAKE_PREFIX_PATH}")
 endif ()
 
 find_package(LLVM REQUIRED CONFIG)
-include_directories(${LLVM_INCLUDE_DIRS})
+include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
@@ -186,8 +187,8 @@ message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 
 if (WAMR_BUILD_DEBUG_AOT EQUAL 1)
   if(LLVM_BUILD_MAIN_SRC_DIR)
-    include_directories(${LLVM_BUILD_MAIN_SRC_DIR}/../lldb/include)
-    include_directories(${LLVM_BUILD_BINARY_DIR}/tools/lldb/include)
+    include_directories(SYSTEM ${LLVM_BUILD_MAIN_SRC_DIR}/../lldb/include)
+    include_directories(SYSTEM ${LLVM_BUILD_BINARY_DIR}/tools/lldb/include)
   endif()
   link_directories(${LLVM_LIBRARY_DIRS})
   find_library(lib_lldb NAMES lldb HINTS ${LLVM_LIBRARY_DIRS} REQUIRED)
@@ -209,12 +210,12 @@ if (NOT (CMAKE_C_COMPILER MATCHES ".*clang.*" OR CMAKE_C_COMPILER_ID MATCHES ".*
 endif()
 
 if (NOT MSVC)
-  set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wformat -Wformat-security \
-                                       -ffunction-sections -fdata-sections \
-                                       -Wno-unused-parameter -Wno-pedantic")
+  set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ffunction-sections -fdata-sections")
   # Remove the extra spaces for better make log
   string (REGEX REPLACE "  *" " " CMAKE_C_FLAGS ${CMAKE_C_FLAGS})
 endif()
+
+include (${PROJECT_SOURCE_DIR}/../build-scripts/warnings.cmake)
 
 set (SHARED_DIR ../core/shared)
 set (IWASM_DIR ../core/iwasm)
@@ -224,24 +225,14 @@ include_directories (${SHARED_DIR}/include
 
 enable_language (ASM)
 
-if (NOT MINGW AND NOT MSVC)
-  if ((NOT DEFINED WAMR_BUILD_LIBC_WASI) AND (NOT DEFINED WAMR_BUILD_LIBC_UVWASI))
-    set (WAMR_BUILD_LIBC_WASI 1)
-  endif ()
+if ((NOT DEFINED WAMR_BUILD_LIBC_WASI) AND (NOT DEFINED WAMR_BUILD_LIBC_UVWASI))
+  # Enable WAMR_BUILD_LIBC_WASI if both are not set
+  set (WAMR_BUILD_LIBC_WASI 1)
+endif ()
 
-  if ((WAMR_BUILD_LIBC_WASI EQUAL 1) AND (WAMR_BUILD_LIBC_UVWASI EQUAL 1))
-    message (WARNING "-- pick WAMR_BULID_LIBC_UVWASI when both are enabled")
-    set (WAMR_BUILD_LIBC_WASI 0)
-  endif ()
-else ()
-  if (NOT DEFINED WAMR_BUILD_LIBC_UVWASI)
-    set (WAMR_BUILD_LIBC_UVWASI 1)
-  endif ()
-
-  if (WAMR_BUILD_LIBC_WASI EQUAL 1)
-    message (WARNING "-- don't accept WAMR_BUILD_LIBC_WASI=1 on MINGW or MSVC")
-    set (WAMR_BUILD_LIBC_WASI 0)
-  endif ()
+if ((WAMR_BUILD_LIBC_WASI EQUAL 1) AND (WAMR_BUILD_LIBC_UVWASI EQUAL 1))
+  message (WARNING "-- pick WAMR_BULID_LIBC_UVWASI when both are enabled")
+  set (WAMR_BUILD_LIBC_WASI 0)
 endif ()
 
 if (NOT DEFINED WAMR_BUILD_LIBC_BUILTIN)
@@ -256,6 +247,12 @@ if (NOT DEFINED WAMR_BUILD_LIB_WASI_THREADS)
   set (WAMR_BUILD_LIB_WASI_THREADS 1)
 endif ()
 
+# Enable by default
+if (NOT DEFINED WAMR_BUILD_SHRUNK_MEMORY)
+  set (WAMR_BUILD_SHRUNK_MEMORY 1)
+endif ()
+add_definitions (-DWASM_ENABLE_SHRUNK_MEMORY=${WAMR_BUILD_SHRUNK_MEMORY})
+
 if (WAMR_BUILD_LIBC_UVWASI EQUAL 1)
   message ("-- Libc WASI enabled with uvwasi implementation")
 endif ()
@@ -265,7 +262,9 @@ if (WAMR_BUILD_LIBC_WASI EQUAL 1)
 endif ()
 
 if (WAMR_BUILD_LIBC_WALI EQUAL 1)
-  message ("-- Libc WALI enabled")
+  add_definitions(-DWASM_DISABLE_HW_BOUND_CHECK=0)
+  add_definitions(-DWASM_ENABLE_MULTI_MODULE=1)
+  message ("-- Libc WALI enabled; currently disables HW bound check and enables multi-module")
 endif ()
 
 if ((NOT WAMR_BUILD_LIBC_WASI) AND (NOT WAMR_BUILD_LIBC_UVWASI))
@@ -290,6 +289,8 @@ else ()
   message ("-- Lib wasi-threads disabled")
 endif ()
 
+set (WAMR_BUILD_WAMR_COMPILER 1)
+
 include (${SHARED_DIR}/platform/${WAMR_BUILD_PLATFORM}/shared_platform.cmake)
 include (${SHARED_DIR}/mem-alloc/mem_alloc.cmake)
 include (${SHARED_DIR}/utils/shared_utils.cmake)
@@ -300,6 +301,8 @@ include (${IWASM_DIR}/common/gc/iwasm_gc.cmake)
 include (${IWASM_DIR}/interpreter/iwasm_interp.cmake)
 include (${IWASM_DIR}/aot/iwasm_aot.cmake)
 include (${IWASM_DIR}/compilation/iwasm_compl.cmake)
+include (${PROJECT_SOURCE_DIR}/../build-scripts/version.cmake)
+include (${IWASM_DIR}/libraries/shared-heap/shared_heap.cmake)
 
 if (WAMR_BUILD_LIBC_BUILTIN EQUAL 1)
   include (${IWASM_DIR}/libraries/libc-builtin/libc_builtin.cmake)
@@ -317,6 +320,16 @@ if (WAMR_BUILD_LIBC_WALI EQUAL 1)
   include (${IWASM_DIR}/libraries/libc-wali/libc_wali.cmake)
 endif ()
 
+if (WAMR_BUILD_LIBC_WASI EQUAL 1)
+  # Enable _Static_assert
+  set (CMAKE_C_STANDARD 11)
+  if (MSVC)
+    add_compile_options(/experimental:c11atomics)
+  endif()
+else()
+  set (CMAKE_C_STANDARD 99)
+endif()
+
 if (WAMR_BUILD_LIB_PTHREAD EQUAL 1)
   include (${IWASM_DIR}/libraries/lib-pthread/lib_pthread.cmake)
 endif ()
@@ -325,9 +338,10 @@ if (WAMR_BUILD_LIB_WASI_THREADS EQUAL 1)
   include (${IWASM_DIR}/libraries/lib-wasi-threads/lib_wasi_threads.cmake)
 endif ()
 
+#TODO: sync up WAMR_BUILD_SANITIZER in config_common.cmake
 # set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wconversion -Wsign-conversion")
 if (WAMR_BUILD_TARGET MATCHES "X86_.*" OR WAMR_BUILD_TARGET STREQUAL "AMD_64")
-  if (NOT (CMAKE_C_COMPILER MATCHES ".*clang.*" OR CMAKE_C_COMPILER_ID MATCHES ".*Clang" OR MSVC))
+  if (CMAKE_C_COMPILER_ID MATCHES ".*GNU")
     set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mindirect-branch-register")
     # UNDEFINED BEHAVIOR, refer to https://en.cppreference.com/w/cpp/language/ub
     if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND NOT WAMR_BUILD_JIT EQUAL 1)
@@ -375,6 +389,7 @@ add_library (vmlib
              ${LIBC_WASI_SOURCE}
              ${LIB_PTHREAD_SOURCE}
              ${LIB_WASI_THREADS_SOURCE}
+             ${LIB_SHARED_HEAP_SOURCE}
              ${IWASM_COMMON_SOURCE}
              ${IWASM_INTERP_SOURCE}
              ${IWASM_AOT_SOURCE}
@@ -386,7 +401,8 @@ add_library (aotclib ${IWASM_COMPL_SOURCE})
 
 add_executable (wamrc main.c)
 check_pie_supported()
-set_target_properties (wamrc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties (wamrc vmlib aotclib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_version_info (wamrc)
 
 if (LLVM_LINK_LLVM_DYLIB)
   set(WAMRC_LINK_LLVM_LIBS LLVM)
@@ -407,4 +423,5 @@ else()
                          ${UV_A_LIBS})
 endif()
 
-install (TARGETS wamrc DESTINATION bin)
+include (GNUInstallDirs)
+install (TARGETS wamrc)

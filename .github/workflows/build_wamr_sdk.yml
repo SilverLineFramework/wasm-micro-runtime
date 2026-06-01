@@ -35,11 +35,17 @@ on:
         type: string
         required: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: write # for uploading release artifacts
+
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - name: download wamr-app-framework
         run: |
@@ -57,6 +63,12 @@ jobs:
           sudo tar -xzf ${basename}
           sudo rm ${basename}
           sudo mv wasi-sdk-* wasi-sdk
+
+      - name: download dependencies
+        run: |
+          cd ./wamr-app-framework/deps
+          ./download.sh
+        working-directory: wamr-sdk
 
       - name: generate wamr-sdk release
         run: |

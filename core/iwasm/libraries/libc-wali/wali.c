@@ -1952,8 +1952,15 @@ wali_wasm_thread_spawn(wasm_exec_env_t exec_env, WasmFuncPtr wasm_start_fn, Wasm
     stack_size = ((WASMModuleInstance *)module_inst)->default_wasm_stack_size;
 
     /* New module instance -- custom data, import function registration, etc. */
+    struct InstantiationArgs2 v2;
+    wasm_runtime_instantiation_args_set_defaults(&v2);
+    v2.v1 = (InstantiationArgs) {
+        .default_stack_size = stack_size,
+        .host_managed_heap_size = 0,
+        .max_memory_pages = 0,
+    };
     if (!(new_module_inst = wasm_runtime_instantiate_internal(
-              module, module_inst, exec_env, stack_size, 0, 0, NULL, 0)))
+              module, module_inst, exec_env, &v2, NULL, 0)))
         return -1;
 
     wasm_runtime_set_custom_data_internal(

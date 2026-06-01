@@ -92,6 +92,10 @@ wasm_exec_env_create_internal(struct WASMModuleInstanceCommon *module_inst,
     wasm_runtime_dump_exec_env_mem_consumption(exec_env);
 #endif
 
+#if WASM_ENABLE_INSTRUCTION_METERING != 0
+    exec_env->instructions_to_execute = -1;
+#endif
+
     return exec_env;
 
 #ifdef OS_ENABLE_HW_BOUND_CHECK
@@ -209,7 +213,7 @@ wasm_exec_env_destroy(WASMExecEnv *exec_env)
         wasm_cluster_wait_for_all_except_self(cluster, exec_env);
 #if WASM_ENABLE_DEBUG_INTERP != 0
         /* Must fire exit event after other threads exits, otherwise
-           the stopped thread will be overrided by other threads */
+           the stopped thread will be overridden by other threads */
         wasm_cluster_thread_exited(exec_env);
 #endif
         /* We have waited for other threads, this is the only alive thread, so
@@ -283,14 +287,19 @@ wasm_exec_env_restore_module_inst(
 void
 wasm_exec_env_set_thread_info(WASMExecEnv *exec_env)
 {
-    uint8 *stack_boundary = os_thread_get_stack_boundary();
-
 #if WASM_ENABLE_THREAD_MGR != 0
     os_mutex_lock(&exec_env->wait_lock);
 #endif
     exec_env->handle = os_self_thread();
-    exec_env->native_stack_boundary =
-        stack_boundary ? stack_boundary + WASM_STACK_GUARD_SIZE : NULL;
+    if (exec_env->user_native_stack_boundary)
+        /* WASM_STACK_GUARD_SIZE isn't added for flexibility to developer,
+           he must ensure that enough guard bytes are kept. */
+        exec_env->native_stack_boundary = exec_env->user_native_stack_boundary;
+    else {
+        uint8 *stack_boundary = os_thread_get_stack_boundary();
+        exec_env->native_stack_boundary =
+            stack_boundary ? stack_boundary + WASM_STACK_GUARD_SIZE : NULL;
+    }
     exec_env->native_stack_top_min = (void *)UINTPTR_MAX;
 #if WASM_ENABLE_THREAD_MGR != 0
     os_mutex_unlock(&exec_env->wait_lock);

@@ -1,7 +1,7 @@
 # Copyright (C) 2019 Intel Corporation.  All rights reserved.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-cmake_minimum_required(VERSION 3.8.2)
+cmake_minimum_required(VERSION 3.14)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(wamr)
@@ -32,7 +32,8 @@ if (NOT DEFINED WAMR_BUILD_LIBC_BUILTIN)
 endif ()
 
 if (NOT DEFINED WAMR_BUILD_LIBC_WASI)
-  # Disable libc wasi support by default
+  # Disable libc wasi support by default, in the future, 
+  # it can be enabled if libc wasi file/socket/lock support is ready on Zephyr platform
   set (WAMR_BUILD_LIBC_WASI 0)
 endif ()
 
@@ -57,4 +58,9 @@ include (${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 target_sources(app PRIVATE
                ${WAMR_RUNTIME_LIB_SOURCE}
                src/main.c)
+
+# Suppress -Wtype-limits warnings originating from Zephyr's own headers
+# (e.g. net_if.h "comparison is always true due to limited range of data type").
+# Pulled in transitively via platform_internal.h → net_pkt.h → net_if.h.
+target_compile_options(app PRIVATE -Wno-type-limits)
 

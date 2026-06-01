@@ -26,6 +26,10 @@
 extern int64 proc_exit_primary_tid;
 #endif
 
+#if WASM_ENABLE_SIMDE != 0
+#include "simde/wasm/simd128.h"
+#endif
+
 typedef int32 CellType_I32;
 typedef int64 CellType_I64;
 typedef float32 CellType_F32;
@@ -47,6 +51,7 @@ typedef float64 CellType_F64;
 #define CHECK_MEMORY_OVERFLOW(bytes)                                           \
     do {                                                                       \
         uint64 offset1 = (uint64)offset + (uint64)addr;                        \
+        CHECK_SHARED_HEAP_OVERFLOW(offset1, bytes, maddr)                      \
         if (disable_bounds_checks || offset1 + bytes <= get_linear_mem_size()) \
             /* If offset1 is in valid range, maddr must also                   \
                 be in valid range, no need to check it again. */               \
@@ -58,6 +63,7 @@ typedef float64 CellType_F64;
 #define CHECK_BULK_MEMORY_OVERFLOW(start, bytes, maddr)                        \
     do {                                                                       \
         uint64 offset1 = (uint32)(start);                                      \
+        CHECK_SHARED_HEAP_OVERFLOW(offset1, bytes, maddr)                      \
         if (disable_bounds_checks || offset1 + bytes <= get_linear_mem_size()) \
             /* App heap space is not valid space for                           \
                bulk memory operation */                                        \
@@ -66,15 +72,18 @@ typedef float64 CellType_F64;
             goto out_of_bounds;                                                \
     } while (0)
 #else
-#define CHECK_MEMORY_OVERFLOW(bytes)                    \
-    do {                                                \
-        uint64 offset1 = (uint64)offset + (uint64)addr; \
-        maddr = memory->memory_data + offset1;          \
+#define CHECK_MEMORY_OVERFLOW(bytes)                      \
+    do {                                                  \
+        uint64 offset1 = (uint64)offset + (uint64)addr;   \
+        CHECK_SHARED_HEAP_OVERFLOW(offset1, bytes, maddr) \
+        maddr = memory->memory_data + offset1;            \
     } while (0)
 
-#define CHECK_BULK_MEMORY_OVERFLOW(start, bytes, maddr) \
-    do {                                                \
-        maddr = memory->memory_data + (uint32)(start);  \
+#define CHECK_BULK_MEMORY_OVERFLOW(start, bytes, maddr)   \
+    do {                                                  \
+        uint64 offset1 = (uint32)(start);                 \
+        CHECK_SHARED_HEAP_OVERFLOW(offset1, bytes, maddr) \
+        maddr = memory->memory_data + offset1;            \
     } while (0)
 #endif /* !defined(OS_ENABLE_HW_BOUND_CHECK) \
           || WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS == 0 */
@@ -84,6 +93,19 @@ typedef float64 CellType_F64;
         if (((uintptr_t)maddr & (align - 1)) != 0) \
             goto unaligned_atomic;                 \
     } while (0)
+
+#if WASM_ENABLE_INSTRUCTION_METERING != 0
+#define CHECK_INSTRUCTION_LIMIT()                                 \
+    if (instructions_left == 0) {                                 \
+        wasm_set_exception(module, "instruction limit exceeded"); \
+        goto got_exception;                                       \
+    }                                                             \
+    else if (instructions_left > 0)                               \
+        instructions_left--;
+
+#else
+#define CHECK_INSTRUCTION_LIMIT() (void)0
+#endif
 
 static inline uint32
 rotl32(uint32 n, uint32 c)
@@ -147,7 +169,7 @@ static inline float64
 f64_min(float64 a, float64 b)
 {
     if (isnan(a) || isnan(b))
-        return NAN;
+        return (float64)NAN;
     else if (a == 0 && a == b)
         return signbit(a) ? a : b;
     else
@@ -158,7 +180,7 @@ static inline float64
 f64_max(float64 a, float64 b)
 {
     if (isnan(a) || isnan(b))
-        return NAN;
+        return (float64)NAN;
     else if (a == 0 && a == b)
         return signbit(a) ? b : a;
     else
@@ -425,7 +447,7 @@ wasm_interp_get_frame_ref(WASMInterpFrame *frame)
         opnd_off = *(int16 *)(frame_ip + off); \
         addr_tmp = frame_lp + opnd_off;        \
         PUT_REF_TO_ADDR(addr_tmp, value);      \
-        SET_FRAME_REF(ond_off);                \
+        SET_FRAME_REF(opnd_off);               \
     } while (0)
 
 #define SET_OPERAND(op_type, off, value) SET_OPERAND_##op_type(off, value)
@@ -438,6 +460,8 @@ wasm_interp_get_frame_ref(WASMInterpFrame *frame)
     (type) GET_I64_FROM_ADDR(frame_lp + *(int16 *)(frame_ip + off))
 #define GET_OPERAND_F64(type, off) \
     (type) GET_F64_FROM_ADDR(frame_lp + *(int16 *)(frame_ip + off))
+#define GET_OPERAND_V128(off) \
+    GET_V128_FROM_ADDR(frame_lp + *(int16 *)(frame_ip + off))
 #define GET_OPERAND_REF(type, off) \
     (type) GET_REF_FROM_ADDR(frame_lp + *(int16 *)(frame_ip + off))
 
@@ -487,6 +511,8 @@ wasm_interp_get_frame_ref(WASMInterpFrame *frame)
 #define POP_F32() (*(float32 *)(frame_lp + GET_OFFSET()))
 
 #define POP_I64() (GET_I64_FROM_ADDR(frame_lp + GET_OFFSET()))
+
+#define POP_V128() (GET_V128_FROM_ADDR(frame_lp + GET_OFFSET()))
 
 #define POP_F64() (GET_F64_FROM_ADDR(frame_lp + GET_OFFSET()))
 
@@ -978,15 +1004,31 @@ fail:
                     }                                                      \
                 }                                                          \
                 else if (cells[0] == 2) {                                  \
-                    frame_lp[dst_offsets[0]] = frame_lp[src_offsets[0]];   \
-                    frame_lp[dst_offsets[0] + 1] =                         \
-                        frame_lp[src_offsets[0] + 1];                      \
+                    int64 tmp_i64 =                                        \
+                        GET_I64_FROM_ADDR(frame_lp + src_offsets[0]);      \
+                    PUT_I64_TO_ADDR(frame_lp + dst_offsets[0], tmp_i64);   \
                     /* Ignore constants because they are not reference */  \
                     if (src_offsets[0] >= 0) {                             \
                         CLEAR_FRAME_REF((unsigned)src_offsets[0]);         \
                         CLEAR_FRAME_REF((unsigned)(src_offsets[0] + 1));   \
                         SET_FRAME_REF((unsigned)dst_offsets[0]);           \
                         SET_FRAME_REF((unsigned)(dst_offsets[0] + 1));     \
+                    }                                                      \
+                }                                                          \
+                else if (cells[0] == 4) {                                  \
+                    V128 tmp_v128 =                                        \
+                        GET_V128_FROM_ADDR(frame_lp + src_offsets[0]);     \
+                    PUT_V128_TO_ADDR(frame_lp + dst_offsets[0], tmp_v128); \
+                    /* Ignore constants because they are not reference */  \
+                    if (src_offsets[0] >= 0) {                             \
+                        CLEAR_FRAME_REF((unsigned)src_offsets[0]);         \
+                        CLEAR_FRAME_REF((unsigned)(src_offsets[0] + 1));   \
+                        CLEAR_FRAME_REF((unsigned)(src_offsets[0] + 2));   \
+                        CLEAR_FRAME_REF((unsigned)(src_offsets[0] + 3));   \
+                        SET_FRAME_REF((unsigned)dst_offsets[0]);           \
+                        SET_FRAME_REF((unsigned)(dst_offsets[0] + 1));     \
+                        SET_FRAME_REF((unsigned)(dst_offsets[0] + 2));     \
+                        SET_FRAME_REF((unsigned)(dst_offsets[0] + 3));     \
                     }                                                      \
                 }                                                          \
             }                                                              \
@@ -1025,9 +1067,14 @@ fail:
                 if (cells[0] == 1)                                          \
                     frame_lp[dst_offsets[0]] = frame_lp[src_offsets[0]];    \
                 else if (cells[0] == 2) {                                   \
-                    frame_lp[dst_offsets[0]] = frame_lp[src_offsets[0]];    \
-                    frame_lp[dst_offsets[0] + 1] =                          \
-                        frame_lp[src_offsets[0] + 1];                       \
+                    int64 tmp_i64 =                                         \
+                        GET_I64_FROM_ADDR(frame_lp + src_offsets[0]);       \
+                    PUT_I64_TO_ADDR(frame_lp + dst_offsets[0], tmp_i64);    \
+                }                                                           \
+                else if (cells[0] == 4) {                                   \
+                    V128 tmp_v128 =                                         \
+                        GET_V128_FROM_ADDR(frame_lp + src_offsets[0]);      \
+                    PUT_V128_TO_ADDR(frame_lp + dst_offsets[0], tmp_v128);  \
                 }                                                           \
             }                                                               \
             else {                                                          \
@@ -1172,6 +1219,10 @@ wasm_interp_call_func_native(WASMModuleInstance *module_inst,
     all_cell_num += (local_cell_num + 3) / 4;
 #endif
 
+    if (!wasm_runtime_detect_native_stack_overflow(exec_env)) {
+        return;
+    }
+
     if (!(frame =
               ALLOC_FRAME(exec_env, wasm_interp_interp_frame_size(all_cell_num),
                           prev_frame)))
@@ -1279,6 +1330,14 @@ wasm_interp_call_func_import(WASMModuleInstance *module_inst,
     WASMExecEnv *sub_module_exec_env = NULL;
     uintptr_t aux_stack_origin_boundary = 0;
     uintptr_t aux_stack_origin_bottom = 0;
+
+    /*
+     * perform stack overflow check before calling
+     * wasm_interp_call_func_bytecode recursively.
+     */
+    if (!wasm_runtime_detect_native_stack_overflow(exec_env)) {
+        return;
+    }
 
     if (!sub_func_inst) {
         snprintf(buf, sizeof(buf),
@@ -1394,6 +1453,7 @@ wasm_interp_dump_op_count()
     do {                                               \
         const void *p_label_addr = *(void **)frame_ip; \
         frame_ip += sizeof(void *);                    \
+        CHECK_INSTRUCTION_LIMIT();                     \
         goto *p_label_addr;                            \
     } while (0)
 #else
@@ -1405,6 +1465,7 @@ wasm_interp_dump_op_count()
         /* int32 relative offset was emitted in 64-bit target */          \
         p_label_addr = label_base + (int32)LOAD_U32_WITH_2U16S(frame_ip); \
         frame_ip += sizeof(int32);                                        \
+        CHECK_INSTRUCTION_LIMIT();                                        \
         goto *p_label_addr;                                               \
     } while (0)
 #else
@@ -1415,6 +1476,7 @@ wasm_interp_dump_op_count()
         /* uint32 label address was emitted in 32-bit target */          \
         p_label_addr = (void *)(uintptr_t)LOAD_U32_WITH_2U16S(frame_ip); \
         frame_ip += sizeof(int32);                                       \
+        CHECK_INSTRUCTION_LIMIT();                                       \
         goto *p_label_addr;                                              \
     } while (0)
 #endif
@@ -1454,7 +1516,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
     WASMMemoryInstance *memory = wasm_get_default_memory(module);
 #if !defined(OS_ENABLE_HW_BOUND_CHECK)              \
     || WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS == 0 \
-    || WASM_ENABLE_BULK_MEMORY != 0
+    || WASM_ENABLE_BULK_MEMORY_OPT != 0
     uint64 linear_mem_size = 0;
     if (memory)
 #if WASM_ENABLE_THREAD_MGR == 0
@@ -1491,6 +1553,13 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
     uint8 *maddr = NULL;
     uint32 local_idx, local_offset, global_idx;
     uint8 opcode = 0, local_type, *global_addr;
+
+#if WASM_ENABLE_INSTRUCTION_METERING != 0
+    int instructions_left = -1;
+    if (exec_env) {
+        instructions_left = exec_env->instructions_to_execute;
+    }
+#endif
 #if !defined(OS_ENABLE_HW_BOUND_CHECK) \
     || WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS == 0
 #if WASM_CONFIGURABLE_BOUNDS_CHECKS != 0
@@ -1516,6 +1585,19 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
     WASMStringviewIterObjectRef stringview_iter_obj;
 #endif
 #endif
+#if WASM_ENABLE_TAIL_CALL != 0 || WASM_ENABLE_GC != 0
+    bool is_return_call = false;
+#endif
+#if WASM_ENABLE_SHARED_HEAP != 0
+    /* TODO: currently flowing two variables are only dummy for shared heap
+     * boundary check, need to be updated when multi-memory or memory64
+     * proposals are to be implemented */
+    bool is_memory64 = false;
+    uint32 memidx = 0;
+    (void)is_memory64;
+    (void)memidx;
+/* #endif */
+#endif /* end of WASM_ENABLE_SHARED_HEAP != 0 */
 
 #if WASM_ENABLE_LABELS_AS_VALUES != 0
 #define HANDLE_OPCODE(op) &&HANDLE_##op
@@ -1631,7 +1713,8 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
             {
                 uint32 ret_idx;
                 WASMFuncType *func_type;
-                uint32 off, ret_offset;
+                int32 off;
+                uint32 ret_offset;
                 uint8 *ret_types;
                 if (cur_func->is_import_func)
                     func_type = cur_func->u.func_import->func_type;
@@ -1643,14 +1726,19 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                 ret_offset = prev_frame->ret_offset;
 
                 for (ret_idx = 0,
-                    off = sizeof(int16) * (func_type->result_count - 1);
+                    off = (int32)sizeof(int16) * (func_type->result_count - 1);
                      ret_idx < func_type->result_count;
-                     ret_idx++, off -= sizeof(int16)) {
+                     ret_idx++, off -= (int32)sizeof(int16)) {
                     if (ret_types[ret_idx] == VALUE_TYPE_I64
                         || ret_types[ret_idx] == VALUE_TYPE_F64) {
                         PUT_I64_TO_ADDR(prev_frame->lp + ret_offset,
                                         GET_OPERAND(uint64, I64, off));
                         ret_offset += 2;
+                    }
+                    else if (ret_types[ret_idx] == VALUE_TYPE_V128) {
+                        PUT_V128_TO_ADDR(prev_frame->lp + ret_offset,
+                                         GET_OPERAND_V128(off));
+                        ret_offset += 4;
                     }
 #if WASM_ENABLE_GC != 0
                     else if (wasm_is_type_reftype(ret_types[ret_idx])) {
@@ -1708,7 +1796,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 
                 /* clang-format off */
 #if WASM_ENABLE_GC == 0
-                fidx = tbl_inst->elems[val];
+                fidx = (uint32)tbl_inst->elems[val];
                 if (fidx == (uint32)-1) {
                     wasm_set_exception(module, "uninitialized element");
                     goto got_exception;
@@ -1750,8 +1838,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                     goto got_exception;
                 }
 #else
-                if (cur_type->min_type_idx_normalized
-                        != cur_func_type->min_type_idx_normalized) {
+                if (!wasm_func_type_is_super_of(cur_type, cur_func_type)) {
                     wasm_set_exception(module, "indirect call type mismatch");
                     goto got_exception;
                 }
@@ -1817,6 +1904,27 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                 }
                 HANDLE_OP_END();
             }
+#if WASM_ENABLE_SIMDE != 0
+            HANDLE_OP(WASM_OP_SELECT_128)
+            {
+                cond = frame_lp[GET_OFFSET()];
+                addr1 = GET_OFFSET();
+                addr2 = GET_OFFSET();
+                addr_ret = GET_OFFSET();
+
+                if (!cond) {
+                    if (addr_ret != addr1)
+                        PUT_V128_TO_ADDR(frame_lp + addr_ret,
+                                         GET_V128_FROM_ADDR(frame_lp + addr1));
+                }
+                else {
+                    if (addr_ret != addr2)
+                        PUT_V128_TO_ADDR(frame_lp + addr_ret,
+                                         GET_V128_FROM_ADDR(frame_lp + addr2));
+                }
+                HANDLE_OP_END();
+            }
+#endif
 
 #if WASM_ENABLE_GC != 0
             HANDLE_OP(WASM_OP_SELECT_T)
@@ -1955,7 +2063,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 #endif
                 func_obj = POP_REF();
                 if (!func_obj) {
-                    wasm_set_exception(module, "null function object");
+                    wasm_set_exception(module, "null function reference");
                     goto got_exception;
                 }
 
@@ -1970,7 +2078,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 #endif
                 func_obj = POP_REF();
                 if (!func_obj) {
-                    wasm_set_exception(module, "null function object");
+                    wasm_set_exception(module, "null function reference");
                     goto got_exception;
                 }
 
@@ -2111,7 +2219,8 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                         struct_obj = POP_REF();
 
                         if (!struct_obj) {
-                            wasm_set_exception(module, "null structure object");
+                            wasm_set_exception(module,
+                                               "null structure reference");
                             goto got_exception;
                         }
 
@@ -2167,7 +2276,8 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 
                         struct_obj = POP_REF();
                         if (!struct_obj) {
-                            wasm_set_exception(module, "null structure object");
+                            wasm_set_exception(module,
+                                               "null structure reference");
                             goto got_exception;
                         }
 
@@ -2469,7 +2579,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 
                         if (len > 0) {
                             if ((uint64)start_offset + len
-                                >= wasm_array_obj_length(array_obj)) {
+                                > wasm_array_obj_length(array_obj)) {
                                 wasm_set_exception(
                                     module, "out of bounds array access");
                                 goto got_exception;
@@ -2834,8 +2944,15 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                         str_obj = (WASMString)wasm_stringref_obj_get_value(
                             stringref_obj);
 
-                        memory_inst = module->memories[mem_idx];
-                        maddr = memory_inst->memory_data + addr;
+#if WASM_ENABLE_SHARED_HEAP != 0
+                        if (app_addr_in_shared_heap((uint64)addr, 1))
+                            shared_heap_addr_app_to_native((uint64)addr, maddr);
+                        else
+#endif
+                        {
+                            memory_inst = module->memories[mem_idx];
+                            maddr = memory_inst->memory_data + addr;
+                        }
 
                         if (opcode == WASM_OP_STRING_ENCODE_WTF16) {
                             flag = WTF16;
@@ -3002,8 +3119,15 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                         addr = POP_I32();
                         stringview_wtf8_obj = POP_REF();
 
-                        memory_inst = module->memories[mem_idx];
-                        maddr = memory_inst->memory_data + addr;
+#if WASM_ENABLE_SHARED_HEAP != 0
+                        if (app_addr_in_shared_heap((uint64)addr, 1))
+                            shared_heap_addr_app_to_native((uint64)addr, maddr);
+                        else
+#endif
+                        {
+                            memory_inst = module->memories[mem_idx];
+                            maddr = memory_inst->memory_data + addr;
+                        }
 
                         bytes_written = wasm_string_encode(
                             (WASMString)wasm_stringview_wtf8_obj_get_value(
@@ -3449,10 +3573,10 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
             {
                 /* clang-format off */
 #if WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS != 0
-                    local_offset = *frame_ip++;
+                local_offset = *frame_ip++;
 #else
-                    local_offset = *frame_ip;
-                    frame_ip += 2;
+                local_offset = *frame_ip;
+                frame_ip += 2;
 #endif
                 /* clang-format on */
                 *(uint32 *)(frame_lp + local_offset) =
@@ -3466,10 +3590,10 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
             {
                 /* clang-format off */
 #if WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS != 0
-                    local_offset = *frame_ip++;
+                local_offset = *frame_ip++;
 #else
-                    local_offset = *frame_ip;
-                    frame_ip += 2;
+                local_offset = *frame_ip;
+                frame_ip += 2;
 #endif
                 /* clang-format on */
                 PUT_I64_TO_ADDR((uint32 *)(frame_lp + local_offset),
@@ -3478,6 +3602,24 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                 HANDLE_OP_END();
             }
 
+#if WASM_ENABLE_SIMDE != 0
+            HANDLE_OP(EXT_OP_SET_LOCAL_FAST_V128)
+            HANDLE_OP(EXT_OP_TEE_LOCAL_FAST_V128)
+            {
+                /* clang-format off */
+#if WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS != 0
+                local_offset = *frame_ip++;
+#else
+                local_offset = *frame_ip;
+                frame_ip += 2;
+#endif
+                /* clang-format on */
+                PUT_V128_TO_ADDR((uint32 *)(frame_lp + local_offset),
+                                 GET_OPERAND_V128(0));
+                frame_ip += 2;
+                HANDLE_OP_END();
+            }
+#endif
             HANDLE_OP(WASM_OP_GET_GLOBAL)
             {
                 global_idx = read_uint32(frame_ip);
@@ -3514,7 +3656,19 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                                 GET_I64_FROM_ADDR((uint32 *)global_addr));
                 HANDLE_OP_END();
             }
-
+#if WASM_ENABLE_SIMDE != 0
+            HANDLE_OP(WASM_OP_GET_GLOBAL_V128)
+            {
+                global_idx = read_uint32(frame_ip);
+                bh_assert(global_idx < module->e->global_count);
+                global = globals + global_idx;
+                global_addr = get_global_addr(global_data, global);
+                addr_ret = GET_OFFSET();
+                PUT_V128_TO_ADDR(frame_lp + addr_ret,
+                                 GET_V128_FROM_ADDR((uint32 *)global_addr));
+                HANDLE_OP_END();
+            }
+#endif
             HANDLE_OP(WASM_OP_SET_GLOBAL)
             {
                 global_idx = read_uint32(frame_ip);
@@ -3581,6 +3735,19 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                                 GET_I64_FROM_ADDR(frame_lp + addr1));
                 HANDLE_OP_END();
             }
+#if WASM_ENABLE_SIMDE != 0
+            HANDLE_OP(WASM_OP_SET_GLOBAL_V128)
+            {
+                global_idx = read_uint32(frame_ip);
+                bh_assert(global_idx < module->e->global_count);
+                global = globals + global_idx;
+                global_addr = get_global_addr(global_data, global);
+                addr1 = GET_OFFSET();
+                PUT_V128_TO_ADDR((uint32 *)global_addr,
+                                 GET_V128_FROM_ADDR(frame_lp + addr1));
+                HANDLE_OP_END();
+            }
+#endif
 
             /* memory load instructions */
             HANDLE_OP(WASM_OP_I32_LOAD)
@@ -3840,6 +4007,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                 addr_ret = GET_OFFSET();
                 delta = (uint32)frame_lp[addr1];
 
+                /* TODO: multi-memory wasm_enlarge_memory_with_idx() */
                 if (!wasm_enlarge_memory(module, delta, false)) {
                     /* failed to memory.grow, return -1 */
                     frame_lp[addr_ret] = -1;
@@ -4095,7 +4263,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                 HANDLE_OP_END();
             }
 
-            /* numberic instructions of i32 */
+            /* numeric instructions of i32 */
             HANDLE_OP(WASM_OP_I32_CLZ)
             {
                 DEF_OP_BIT_COUNT(uint32, I32, clz32);
@@ -4265,7 +4433,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                 HANDLE_OP_END();
             }
 
-            /* numberic instructions of i64 */
+            /* numeric instructions of i64 */
             HANDLE_OP(WASM_OP_I64_CLZ)
             {
                 DEF_OP_BIT_COUNT(uint64, I64, clz64);
@@ -4422,7 +4590,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                 HANDLE_OP_END();
             }
 
-            /* numberic instructions of f32 */
+            /* numeric instructions of f32 */
             HANDLE_OP(WASM_OP_F32_ABS)
             {
                 DEF_OP_MATH(float32, F32, fabsf);
@@ -4527,7 +4695,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                 HANDLE_OP_END();
             }
 
-            /* numberic instructions of f64 */
+            /* numeric instructions of f64 */
             HANDLE_OP(WASM_OP_F64_ABS)
             {
                 DEF_OP_MATH(float64, F64, fabs);
@@ -4825,6 +4993,28 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 
                 HANDLE_OP_END();
             }
+#if WASM_ENABLE_SIMDE != 0
+            HANDLE_OP(EXT_OP_COPY_STACK_TOP_V128)
+            {
+                addr1 = GET_OFFSET();
+                addr2 = GET_OFFSET();
+
+                PUT_V128_TO_ADDR(frame_lp + addr2,
+                                 GET_V128_FROM_ADDR(frame_lp + addr1));
+
+#if WASM_ENABLE_GC != 0
+                /* Ignore constants because they are not reference */
+                if (addr1 >= 0) {
+                    if (*FRAME_REF(addr1)) {
+                        CLEAR_FRAME_REF(addr1);
+                        SET_FRAME_REF(addr2);
+                    }
+                }
+#endif
+
+                HANDLE_OP_END();
+            }
+#endif
 
             HANDLE_OP(EXT_OP_COPY_STACK_VALUES)
             {
@@ -4871,14 +5061,22 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                 GET_LOCAL_INDEX_TYPE_AND_OFFSET();
                 addr1 = GET_OFFSET();
 
-                if (local_type == VALUE_TYPE_I32
-                    || local_type == VALUE_TYPE_F32) {
+                if (local_type == VALUE_TYPE_I32 || local_type == VALUE_TYPE_F32
+#if WASM_ENABLE_REF_TYPES != 0 && WASM_ENABLE_GC == 0
+                    || local_type == VALUE_TYPE_FUNCREF
+                    || local_type == VALUE_TYPE_EXTERNREF
+#endif
+                ) {
                     *(int32 *)(frame_lp + local_offset) = frame_lp[addr1];
                 }
                 else if (local_type == VALUE_TYPE_I64
                          || local_type == VALUE_TYPE_F64) {
                     PUT_I64_TO_ADDR((uint32 *)(frame_lp + local_offset),
                                     GET_I64_FROM_ADDR(frame_lp + addr1));
+                }
+                else if (local_type == VALUE_TYPE_V128) {
+                    PUT_V128_TO_ADDR((frame_lp + local_offset),
+                                     GET_V128_FROM_ADDR(frame_lp + addr1));
                 }
 #if WASM_ENABLE_GC != 0
                 else if (wasm_is_type_reftype(local_type)) {
@@ -4983,9 +5181,18 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 #ifndef OS_ENABLE_HW_BOUND_CHECK
                         CHECK_BULK_MEMORY_OVERFLOW(addr, bytes, maddr);
 #else
-                        if ((uint64)(uint32)addr + bytes > linear_mem_size)
-                            goto out_of_bounds;
-                        maddr = memory->memory_data + (uint32)addr;
+#if WASM_ENABLE_SHARED_HEAP != 0
+                        if (app_addr_in_shared_heap((uint64)(uint32)addr,
+                                                    bytes))
+                            shared_heap_addr_app_to_native((uint64)(uint32)addr,
+                                                           maddr);
+                        else
+#endif
+                        {
+                            if ((uint64)(uint32)addr + bytes > linear_mem_size)
+                                goto out_of_bounds;
+                            maddr = memory->memory_data + (uint32)addr;
+                        }
 #endif
                         if (bh_bitmap_get_bit(module->e->common.data_dropped,
                                               segment)) {
@@ -5014,6 +5221,8 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                                           segment);
                         break;
                     }
+#endif /* WASM_ENABLE_BULK_MEMORY */
+#if WASM_ENABLE_BULK_MEMORY_OPT != 0
                     case WASM_OP_MEMORY_COPY:
                     {
                         uint32 dst, src, len;
@@ -5030,19 +5239,46 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 #ifndef OS_ENABLE_HW_BOUND_CHECK
                         CHECK_BULK_MEMORY_OVERFLOW(src, len, msrc);
                         CHECK_BULK_MEMORY_OVERFLOW(dst, len, mdst);
-#else
-                        if ((uint64)(uint32)src + len > linear_mem_size)
-                            goto out_of_bounds;
-                        msrc = memory->memory_data + (uint32)src;
-
-                        if ((uint64)(uint32)dst + len > linear_mem_size)
-                            goto out_of_bounds;
-                        mdst = memory->memory_data + (uint32)dst;
+#else /* else of OS_ENABLE_HW_BOUND_CHECK */
+#if WASM_ENABLE_SHARED_HEAP != 0
+                        if (app_addr_in_shared_heap((uint64)src, len))
+                            shared_heap_addr_app_to_native((uint64)src, msrc);
+                        else
 #endif
+                        {
+                            if ((uint64)(uint32)src + len > linear_mem_size)
+                                goto out_of_bounds;
+                            msrc = memory->memory_data + (uint32)src;
+                        }
 
-                        /* allowing the destination and source to overlap */
-                        bh_memmove_s(mdst, (uint32)(linear_mem_size - dst),
-                                     msrc, len);
+#if WASM_ENABLE_SHARED_HEAP != 0
+                        if (app_addr_in_shared_heap((uint64)dst, len)) {
+                            shared_heap_addr_app_to_native((uint64)dst, mdst);
+                        }
+                        else
+#endif
+                        {
+                            if ((uint64)(uint32)dst + len > linear_mem_size)
+                                goto out_of_bounds;
+                            mdst = memory->memory_data + (uint32)dst;
+                        }
+#endif /* end of OS_ENABLE_HW_BOUND_CHECK */
+
+                        /*
+                         * avoid unnecessary operations
+                         *
+                         * since dst and src both are valid indexes in the
+                         * linear memory, mdst and msrc can't be NULL
+                         *
+                         * The spec. converts memory.copy into i32.load8 and
+                         * i32.store8; the following are runtime-specific
+                         * optimizations.
+                         *
+                         */
+                        if (len && mdst != msrc) {
+                            /* allowing the destination and source to overlap */
+                            memmove(mdst, msrc, len);
+                        }
                         break;
                     }
                     case WASM_OP_MEMORY_FILL:
@@ -5061,15 +5297,23 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 #ifndef OS_ENABLE_HW_BOUND_CHECK
                         CHECK_BULK_MEMORY_OVERFLOW(dst, len, mdst);
 #else
-                        if ((uint64)(uint32)dst + len > linear_mem_size)
-                            goto out_of_bounds;
-                        mdst = memory->memory_data + (uint32)dst;
+#if WASM_ENABLE_SHARED_HEAP != 0
+                        if (app_addr_in_shared_heap((uint64)(uint32)dst, len))
+                            shared_heap_addr_app_to_native((uint64)(uint32)dst,
+                                                           mdst);
+                        else
+#endif
+                        {
+                            if ((uint64)(uint32)dst + len > linear_mem_size)
+                                goto out_of_bounds;
+                            mdst = memory->memory_data + (uint32)dst;
+                        }
 #endif
 
                         memset(mdst, fill_val, len);
                         break;
                     }
-#endif /* WASM_ENABLE_BULK_MEMORY */
+#endif /* WASM_ENABLE_BULK_MEMORY_OPT */
 #if WASM_ENABLE_REF_TYPES != 0 || WASM_ENABLE_GC != 0
                     case WASM_OP_TABLE_INIT:
                     {
@@ -5129,12 +5373,14 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                                       || init_values[i].init_expr_type
                                              == INIT_EXPR_TYPE_FUNCREF_CONST);
 #if WASM_ENABLE_GC == 0
-                            table_elems[i] =
-                                (table_elem_type_t)init_values[i].u.ref_index;
+                            table_elems[i] = (table_elem_type_t)init_values[i]
+                                                 .u.unary.v.ref_index;
 #else
-                            if (init_values[i].u.ref_index != UINT32_MAX) {
+                            if (init_values[i].u.unary.v.ref_index
+                                != UINT32_MAX) {
                                 if (!(func_obj = wasm_create_func_obj(
-                                          module, init_values[i].u.ref_index,
+                                          module,
+                                          init_values[i].u.unary.v.ref_index,
                                           true, NULL, 0))) {
                                     goto got_exception;
                                 }
@@ -5635,8 +5881,1577 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
             {
                 frame = prev_frame;
                 frame_ip = frame->ip;
+#if WASM_ENABLE_TAIL_CALL != 0 || WASM_ENABLE_GC != 0
+                is_return_call = false;
+#endif
                 goto call_func_from_entry;
             }
+#if WASM_ENABLE_SIMDE != 0
+#define SIMD_V128_TO_SIMDE_V128(s_v)                                    \
+    ({                                                                  \
+        bh_assert(sizeof(V128) == sizeof(simde_v128_t));                \
+        simde_v128_t se_v;                                              \
+        bh_memcpy_s(&se_v, sizeof(simde_v128_t), &(s_v), sizeof(V128)); \
+        se_v;                                                           \
+    })
+
+#define SIMDE_V128_TO_SIMD_V128(sv, v)                                \
+    do {                                                              \
+        bh_assert(sizeof(V128) == sizeof(simde_v128_t));              \
+        bh_memcpy_s(&(v), sizeof(V128), &(sv), sizeof(simde_v128_t)); \
+    } while (0)
+
+            HANDLE_OP(WASM_OP_SIMD_PREFIX)
+            {
+                GET_OPCODE();
+
+                switch (opcode) {
+                    /* Memory */
+                    case SIMD_v128_load:
+                    {
+                        uint32 offset, addr;
+                        offset = read_uint32(frame_ip);
+                        addr = POP_I32();
+                        addr_ret = GET_OFFSET();
+                        CHECK_MEMORY_OVERFLOW(16);
+                        PUT_V128_TO_ADDR(frame_lp + addr_ret, LOAD_V128(maddr));
+                        break;
+                    }
+#define SIMD_LOAD_OP(simde_func)                       \
+    do {                                               \
+        uint32 offset, addr;                           \
+        offset = read_uint32(frame_ip);                \
+        addr = POP_I32();                              \
+        addr_ret = GET_OFFSET();                       \
+        CHECK_MEMORY_OVERFLOW(8);                      \
+                                                       \
+        simde_v128_t simde_result = simde_func(maddr); \
+                                                       \
+        V128 result;                                   \
+        SIMDE_V128_TO_SIMD_V128(simde_result, result); \
+        PUT_V128_TO_ADDR(frame_lp + addr_ret, result); \
+                                                       \
+    } while (0)
+                    case SIMD_v128_load8x8_s:
+                    {
+                        SIMD_LOAD_OP(simde_wasm_i16x8_load8x8);
+                        break;
+                    }
+                    case SIMD_v128_load8x8_u:
+                    {
+                        SIMD_LOAD_OP(simde_wasm_u16x8_load8x8);
+                        break;
+                    }
+                    case SIMD_v128_load16x4_s:
+                    {
+                        SIMD_LOAD_OP(simde_wasm_i32x4_load16x4);
+                        break;
+                    }
+                    case SIMD_v128_load16x4_u:
+                    {
+                        SIMD_LOAD_OP(simde_wasm_u32x4_load16x4);
+                        break;
+                    }
+                    case SIMD_v128_load32x2_s:
+                    {
+                        SIMD_LOAD_OP(simde_wasm_i64x2_load32x2);
+                        break;
+                    }
+                    case SIMD_v128_load32x2_u:
+                    {
+                        SIMD_LOAD_OP(simde_wasm_u64x2_load32x2);
+                        break;
+                    }
+#define SIMD_LOAD_SPLAT_OP(simde_func, width)          \
+    do {                                               \
+        uint32 offset, addr;                           \
+        offset = read_uint32(frame_ip);                \
+        addr = POP_I32();                              \
+        addr_ret = GET_OFFSET();                       \
+        CHECK_MEMORY_OVERFLOW(width / 8);              \
+                                                       \
+        simde_v128_t simde_result = simde_func(maddr); \
+                                                       \
+        V128 result;                                   \
+        SIMDE_V128_TO_SIMD_V128(simde_result, result); \
+                                                       \
+        PUT_V128_TO_ADDR(frame_lp + addr_ret, result); \
+    } while (0)
+
+                    case SIMD_v128_load8_splat:
+                    {
+                        SIMD_LOAD_SPLAT_OP(simde_wasm_v128_load8_splat, 8);
+                        break;
+                    }
+                    case SIMD_v128_load16_splat:
+                    {
+                        SIMD_LOAD_SPLAT_OP(simde_wasm_v128_load16_splat, 16);
+                        break;
+                    }
+                    case SIMD_v128_load32_splat:
+                    {
+                        SIMD_LOAD_SPLAT_OP(simde_wasm_v128_load32_splat, 32);
+                        break;
+                    }
+                    case SIMD_v128_load64_splat:
+                    {
+                        SIMD_LOAD_SPLAT_OP(simde_wasm_v128_load64_splat, 64);
+                        break;
+                    }
+                    case SIMD_v128_store:
+                    {
+                        uint32 offset, addr;
+                        offset = read_uint32(frame_ip);
+                        V128 data = POP_V128();
+                        addr = POP_I32();
+
+                        CHECK_MEMORY_OVERFLOW(16);
+                        STORE_V128(maddr, data);
+                        break;
+                    }
+
+                    /* Basic */
+                    case SIMD_v128_const:
+                    {
+                        uint8 *orig_ip = frame_ip;
+
+                        frame_ip += sizeof(V128);
+                        addr_ret = GET_OFFSET();
+
+                        PUT_V128_TO_ADDR(frame_lp + addr_ret, *(V128 *)orig_ip);
+                        break;
+                    }
+                    /* TODO: Add a faster SIMD implementation */
+                    case SIMD_v8x16_shuffle:
+                    {
+                        V128 indices;
+                        bh_memcpy_s(&indices, sizeof(V128), frame_ip,
+                                    sizeof(V128));
+                        frame_ip += sizeof(V128);
+
+                        V128 v2 = POP_V128();
+                        V128 v1 = POP_V128();
+                        addr_ret = GET_OFFSET();
+
+                        V128 result;
+                        for (int i = 0; i < 16; i++) {
+                            uint8_t index = indices.i8x16[i];
+                            if (index < 16) {
+                                result.i8x16[i] = v1.i8x16[index];
+                            }
+                            else {
+                                result.i8x16[i] = v2.i8x16[index - 16];
+                            }
+                        }
+
+                        PUT_V128_TO_ADDR(frame_lp + addr_ret, result);
+                        break;
+                    }
+                    case SIMD_v8x16_swizzle:
+                    {
+                        V128 v2 = POP_V128();
+                        V128 v1 = POP_V128();
+                        addr_ret = GET_OFFSET();
+                        simde_v128_t simde_result = simde_wasm_i8x16_swizzle(
+                            SIMD_V128_TO_SIMDE_V128(v1),
+                            SIMD_V128_TO_SIMDE_V128(v2));
+
+                        V128 result;
+                        SIMDE_V128_TO_SIMD_V128(simde_result, result);
+
+                        PUT_V128_TO_ADDR(frame_lp + addr_ret, result);
+                        break;
+                    }
+
+                    /* Splat */
+#define SIMD_SPLAT_OP(simde_func, pop_func, val_type)  \
+    do {                                               \
+        val_type v = pop_func();                       \
+        addr_ret = GET_OFFSET();                       \
+                                                       \
+        simde_v128_t simde_result = simde_func(v);     \
+                                                       \
+        V128 result;                                   \
+        SIMDE_V128_TO_SIMD_V128(simde_result, result); \
+                                                       \
+        PUT_V128_TO_ADDR(frame_lp + addr_ret, result); \
+    } while (0)
+
+#define SIMD_SPLAT_OP_I32(simde_func) SIMD_SPLAT_OP(simde_func, POP_I32, uint32)
+#define SIMD_SPLAT_OP_I64(simde_func) SIMD_SPLAT_OP(simde_func, POP_I64, uint64)
+#define SIMD_SPLAT_OP_F32(simde_func) \
+    SIMD_SPLAT_OP(simde_func, POP_F32, float32)
+#define SIMD_SPLAT_OP_F64(simde_func) \
+    SIMD_SPLAT_OP(simde_func, POP_F64, float64)
+
+                    case SIMD_i8x16_splat:
+                    {
+                        val = POP_I32();
+                        addr_ret = GET_OFFSET();
+
+                        simde_v128_t simde_result = simde_wasm_i8x16_splat(val);
+
+                        V128 result;
+                        SIMDE_V128_TO_SIMD_V128(simde_result, result);
+
+                        PUT_V128_TO_ADDR(frame_lp + addr_ret, result);
+                        break;
+                    }
+                    case SIMD_i16x8_splat:
+                    {
+                        SIMD_SPLAT_OP_I32(simde_wasm_i16x8_splat);
+                        break;
+                    }
+                    case SIMD_i32x4_splat:
+                    {
+                        SIMD_SPLAT_OP_I32(simde_wasm_i32x4_splat);
+                        break;
+                    }
+                    case SIMD_i64x2_splat:
+                    {
+                        SIMD_SPLAT_OP_I64(simde_wasm_i64x2_splat);
+                        break;
+                    }
+                    case SIMD_f32x4_splat:
+                    {
+                        SIMD_SPLAT_OP_F32(simde_wasm_f32x4_splat);
+                        break;
+                    }
+                    case SIMD_f64x2_splat:
+                    {
+                        SIMD_SPLAT_OP_F64(simde_wasm_f64x2_splat);
+                        break;
+                    }
+#if WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS != 0
+#define SIMD_LANE_HANDLE_UNALIGNED_ACCESS()
+#else
+#define SIMD_LANE_HANDLE_UNALIGNED_ACCESS() (void)*frame_ip++
+#endif /* WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS != 0 */
+
+#define SIMD_EXTRACT_LANE_OP(register, return_type, push_elem) \
+    do {                                                       \
+        uint8 lane = *frame_ip++;                              \
+        SIMD_LANE_HANDLE_UNALIGNED_ACCESS();                   \
+        V128 v = POP_V128();                                   \
+        push_elem((return_type)(v.register[lane]));            \
+    } while (0)
+#define SIMD_REPLACE_LANE_OP(register, return_type, pop_elem) \
+    do {                                                      \
+        uint8 lane = *frame_ip++;                             \
+        SIMD_LANE_HANDLE_UNALIGNED_ACCESS();                  \
+        return_type replacement = pop_elem();                 \
+        V128 v = POP_V128();                                  \
+        v.register[lane] = replacement;                       \
+        addr_ret = GET_OFFSET();                              \
+        PUT_V128_TO_ADDR(frame_lp + addr_ret, v);             \
+    } while (0)
+                    case SIMD_i8x16_extract_lane_s:
+                    {
+                        SIMD_EXTRACT_LANE_OP(i8x16, int8, PUSH_I32);
+                        break;
+                    }
+                    case SIMD_i8x16_extract_lane_u:
+                    {
+                        SIMD_EXTRACT_LANE_OP(i8x16, uint8, PUSH_I32);
+                        break;
+                    }
+                    case SIMD_i8x16_replace_lane:
+                    {
+                        SIMD_REPLACE_LANE_OP(i8x16, int8, POP_I32);
+                        break;
+                    }
+                    case SIMD_i16x8_extract_lane_s:
+                    {
+                        SIMD_EXTRACT_LANE_OP(i16x8, int16, PUSH_I32);
+                        break;
+                    }
+                    case SIMD_i16x8_extract_lane_u:
+                    {
+                        SIMD_EXTRACT_LANE_OP(i16x8, uint16, PUSH_I32);
+                        break;
+                    }
+                    case SIMD_i16x8_replace_lane:
+                    {
+                        SIMD_REPLACE_LANE_OP(i16x8, int16, POP_I32);
+                        break;
+                    }
+                    case SIMD_i32x4_extract_lane:
+                    {
+                        SIMD_EXTRACT_LANE_OP(i32x4, int32, PUSH_I32);
+                        break;
+                    }
+                    case SIMD_i32x4_replace_lane:
+                    {
+                        SIMD_REPLACE_LANE_OP(i32x4, int32, POP_I32);
+                        break;
+                    }
+                    case SIMD_i64x2_extract_lane:
+                    {
+                        SIMD_EXTRACT_LANE_OP(i64x2, int64, PUSH_I64);
+                        break;
+                    }
+                    case SIMD_i64x2_replace_lane:
+                    {
+                        SIMD_REPLACE_LANE_OP(i64x2, int64, POP_I64);
+                        break;
+                    }
+                    case SIMD_f32x4_extract_lane:
+                    {
+                        SIMD_EXTRACT_LANE_OP(f32x4, float32, PUSH_F32);
+                        break;
+                    }
+                    case SIMD_f32x4_replace_lane:
+                    {
+                        SIMD_REPLACE_LANE_OP(f32x4, float32, POP_F32);
+                        break;
+                    }
+                    case SIMD_f64x2_extract_lane:
+                    {
+                        SIMD_EXTRACT_LANE_OP(f64x2, float64, PUSH_F64);
+                        break;
+                    }
+                    case SIMD_f64x2_replace_lane:
+                    {
+                        SIMD_REPLACE_LANE_OP(f64x2, float64, POP_F64);
+                        break;
+                    }
+
+#define SIMD_DOUBLE_OP(simde_func)                                           \
+    do {                                                                     \
+        V128 v2 = POP_V128();                                                \
+        V128 v1 = POP_V128();                                                \
+        addr_ret = GET_OFFSET();                                             \
+                                                                             \
+        simde_v128_t simde_result = simde_func(SIMD_V128_TO_SIMDE_V128(v1),  \
+                                               SIMD_V128_TO_SIMDE_V128(v2)); \
+                                                                             \
+        V128 result;                                                         \
+        SIMDE_V128_TO_SIMD_V128(simde_result, result);                       \
+                                                                             \
+        PUT_V128_TO_ADDR(frame_lp + addr_ret, result);                       \
+    } while (0)
+
+                    /* i8x16 comparison operations */
+                    case SIMD_i8x16_eq:
+                    {
+                        V128 v2 = POP_V128();
+                        V128 v1 = POP_V128();
+                        addr_ret = GET_OFFSET();
+
+                        simde_v128_t simde_result =
+                            simde_wasm_i8x16_eq(SIMD_V128_TO_SIMDE_V128(v1),
+                                                SIMD_V128_TO_SIMDE_V128(v2));
+
+                        V128 result;
+                        SIMDE_V128_TO_SIMD_V128(simde_result, result);
+
+                        PUT_V128_TO_ADDR(frame_lp + addr_ret, result);
+                        break;
+                    }
+                    case SIMD_i8x16_ne:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i8x16_ne);
+                        break;
+                    }
+                    case SIMD_i8x16_lt_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i8x16_lt);
+                        break;
+                    }
+                    case SIMD_i8x16_lt_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u8x16_lt);
+                        break;
+                    }
+                    case SIMD_i8x16_gt_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i8x16_gt);
+                        break;
+                    }
+                    case SIMD_i8x16_gt_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u8x16_gt);
+                        break;
+                    }
+                    case SIMD_i8x16_le_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i8x16_le);
+                        break;
+                    }
+                    case SIMD_i8x16_le_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u8x16_le);
+                        break;
+                    }
+                    case SIMD_i8x16_ge_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i8x16_ge);
+                        break;
+                    }
+                    case SIMD_i8x16_ge_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u8x16_ge);
+                        break;
+                    }
+
+                    /* i16x8 comparison operations */
+                    case SIMD_i16x8_eq:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_eq);
+                        break;
+                    }
+                    case SIMD_i16x8_ne:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_ne);
+                        break;
+                    }
+                    case SIMD_i16x8_lt_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_lt);
+                        break;
+                    }
+                    case SIMD_i16x8_lt_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u16x8_lt);
+                        break;
+                    }
+                    case SIMD_i16x8_gt_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_gt);
+                        break;
+                    }
+                    case SIMD_i16x8_gt_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u16x8_gt);
+                        break;
+                    }
+                    case SIMD_i16x8_le_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_le);
+                        break;
+                    }
+                    case SIMD_i16x8_le_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u16x8_le);
+                        break;
+                    }
+                    case SIMD_i16x8_ge_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_ge);
+                        break;
+                    }
+                    case SIMD_i16x8_ge_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u16x8_ge);
+                        break;
+                    }
+
+                    /*  i32x4 comparison operations */
+                    case SIMD_i32x4_eq:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i32x4_eq);
+                        break;
+                    }
+                    case SIMD_i32x4_ne:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i32x4_ne);
+                        break;
+                    }
+                    case SIMD_i32x4_lt_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i32x4_lt);
+                        break;
+                    }
+                    case SIMD_i32x4_lt_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u32x4_lt);
+                        break;
+                    }
+                    case SIMD_i32x4_gt_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i32x4_gt);
+                        break;
+                    }
+                    case SIMD_i32x4_gt_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u32x4_gt);
+                        break;
+                    }
+                    case SIMD_i32x4_le_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i32x4_le);
+                        break;
+                    }
+                    case SIMD_i32x4_le_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u32x4_le);
+                        break;
+                    }
+                    case SIMD_i32x4_ge_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i32x4_ge);
+                        break;
+                    }
+                    case SIMD_i32x4_ge_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u32x4_ge);
+                        break;
+                    }
+
+                    /* f32x4 comparison operations */
+                    case SIMD_f32x4_eq:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f32x4_eq);
+                        break;
+                    }
+                    case SIMD_f32x4_ne:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f32x4_ne);
+                        break;
+                    }
+                    case SIMD_f32x4_lt:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f32x4_lt);
+                        break;
+                    }
+                    case SIMD_f32x4_gt:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f32x4_gt);
+                        break;
+                    }
+                    case SIMD_f32x4_le:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f32x4_le);
+                        break;
+                    }
+                    case SIMD_f32x4_ge:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f32x4_ge);
+                        break;
+                    }
+
+                    /* f64x2 comparison operations */
+                    case SIMD_f64x2_eq:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f64x2_eq);
+                        break;
+                    }
+                    case SIMD_f64x2_ne:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f64x2_ne);
+                        break;
+                    }
+                    case SIMD_f64x2_lt:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f64x2_lt);
+                        break;
+                    }
+                    case SIMD_f64x2_gt:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f64x2_gt);
+                        break;
+                    }
+                    case SIMD_f64x2_le:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f64x2_le);
+                        break;
+                    }
+                    case SIMD_f64x2_ge:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f64x2_ge);
+                        break;
+                    }
+
+                    /* v128 bitwise operations */
+#define SIMD_V128_BITWISE_OP_COMMON(result_expr_0, result_expr_1) \
+    do {                                                          \
+        V128 result;                                              \
+        result.i64x2[0] = (result_expr_0);                        \
+        result.i64x2[1] = (result_expr_1);                        \
+        addr_ret = GET_OFFSET();                                  \
+        PUT_V128_TO_ADDR(frame_lp + addr_ret, result);            \
+    } while (0)
+
+                    case SIMD_v128_not:
+                    {
+                        V128 value = POP_V128();
+                        SIMD_V128_BITWISE_OP_COMMON(~value.i64x2[0],
+                                                    ~value.i64x2[1]);
+                        break;
+                    }
+                    case SIMD_v128_and:
+                    {
+                        V128 v2 = POP_V128();
+                        V128 v1 = POP_V128();
+                        SIMD_V128_BITWISE_OP_COMMON(v1.i64x2[0] & v2.i64x2[0],
+                                                    v1.i64x2[1] & v2.i64x2[1]);
+                        break;
+                    }
+                    case SIMD_v128_andnot:
+                    {
+                        V128 v2 = POP_V128();
+                        V128 v1 = POP_V128();
+                        SIMD_V128_BITWISE_OP_COMMON(
+                            v1.i64x2[0] & (~v2.i64x2[0]),
+                            v1.i64x2[1] & (~v2.i64x2[1]));
+                        break;
+                    }
+                    case SIMD_v128_or:
+                    {
+                        V128 v2 = POP_V128();
+                        V128 v1 = POP_V128();
+                        SIMD_V128_BITWISE_OP_COMMON(v1.i64x2[0] | v2.i64x2[0],
+                                                    v1.i64x2[1] | v2.i64x2[1]);
+                        break;
+                    }
+                    case SIMD_v128_xor:
+                    {
+                        V128 v2 = POP_V128();
+                        V128 v1 = POP_V128();
+                        SIMD_V128_BITWISE_OP_COMMON(v1.i64x2[0] ^ v2.i64x2[0],
+                                                    v1.i64x2[1] ^ v2.i64x2[1]);
+                        break;
+                    }
+                    case SIMD_v128_bitselect:
+                    {
+                        V128 v1 = POP_V128();
+                        V128 v2 = POP_V128();
+                        V128 v3 = POP_V128();
+                        addr_ret = GET_OFFSET();
+
+                        simde_v128_t simde_result = simde_wasm_v128_bitselect(
+                            SIMD_V128_TO_SIMDE_V128(v3),
+                            SIMD_V128_TO_SIMDE_V128(v2),
+                            SIMD_V128_TO_SIMDE_V128(v1));
+
+                        V128 result;
+                        SIMDE_V128_TO_SIMD_V128(simde_result, result);
+
+                        PUT_V128_TO_ADDR(frame_lp + addr_ret, result);
+                        break;
+                    }
+                    case SIMD_v128_any_true:
+                    {
+                        V128 value = POP_V128();
+                        addr_ret = GET_OFFSET();
+                        frame_lp[addr_ret] =
+                            value.i64x2[0] != 0 || value.i64x2[1] != 0;
+                        break;
+                    }
+
+#define SIMD_LOAD_LANE_COMMON(vec, register, lane, width)            \
+    do {                                                             \
+        addr_ret = GET_OFFSET();                                     \
+        CHECK_MEMORY_OVERFLOW(width / 8);                            \
+        if (width == 64) {                                           \
+            vec.register[lane] = GET_I64_FROM_ADDR((uint32 *)maddr); \
+        }                                                            \
+        else {                                                       \
+            vec.register[lane] = *(uint##width *)(maddr);            \
+        }                                                            \
+        PUT_V128_TO_ADDR(frame_lp + addr_ret, vec);                  \
+    } while (0)
+
+#define SIMD_LOAD_LANE_OP(register, width)                 \
+    do {                                                   \
+        uint32 offset, addr;                               \
+        offset = read_uint32(frame_ip);                    \
+        V128 vec = POP_V128();                             \
+        addr = POP_I32();                                  \
+        int lane = *frame_ip++;                            \
+        SIMD_LANE_HANDLE_UNALIGNED_ACCESS();               \
+        SIMD_LOAD_LANE_COMMON(vec, register, lane, width); \
+    } while (0)
+
+                    case SIMD_v128_load8_lane:
+                    {
+                        SIMD_LOAD_LANE_OP(i8x16, 8);
+                        break;
+                    }
+                    case SIMD_v128_load16_lane:
+                    {
+                        SIMD_LOAD_LANE_OP(i16x8, 16);
+                        break;
+                    }
+                    case SIMD_v128_load32_lane:
+                    {
+                        SIMD_LOAD_LANE_OP(i32x4, 32);
+                        break;
+                    }
+                    case SIMD_v128_load64_lane:
+                    {
+                        SIMD_LOAD_LANE_OP(i64x2, 64);
+                        break;
+                    }
+#define SIMD_STORE_LANE_OP(register, width)               \
+    do {                                                  \
+        uint32 offset, addr;                              \
+        offset = read_uint32(frame_ip);                   \
+        V128 vec = POP_V128();                            \
+        addr = POP_I32();                                 \
+        int lane = *frame_ip++;                           \
+        SIMD_LANE_HANDLE_UNALIGNED_ACCESS();              \
+        CHECK_MEMORY_OVERFLOW(width / 8);                 \
+        if (width == 64) {                                \
+            STORE_I64(maddr, vec.register[lane]);         \
+        }                                                 \
+        else {                                            \
+            *(uint##width *)(maddr) = vec.register[lane]; \
+        }                                                 \
+    } while (0)
+
+                    case SIMD_v128_store8_lane:
+                    {
+                        SIMD_STORE_LANE_OP(i8x16, 8);
+                        break;
+                    }
+
+                    case SIMD_v128_store16_lane:
+                    {
+                        SIMD_STORE_LANE_OP(i16x8, 16);
+                        break;
+                    }
+
+                    case SIMD_v128_store32_lane:
+                    {
+                        SIMD_STORE_LANE_OP(i32x4, 32);
+                        break;
+                    }
+
+                    case SIMD_v128_store64_lane:
+                    {
+                        SIMD_STORE_LANE_OP(i64x2, 64);
+                        break;
+                    }
+#define SIMD_LOAD_ZERO_OP(register, width)                 \
+    do {                                                   \
+        uint32 offset, addr;                               \
+        offset = read_uint32(frame_ip);                    \
+        addr = POP_I32();                                  \
+        int32 lane = 0;                                    \
+        V128 vec = { 0 };                                  \
+        SIMD_LOAD_LANE_COMMON(vec, register, lane, width); \
+    } while (0)
+
+                    case SIMD_v128_load32_zero:
+                    {
+                        SIMD_LOAD_ZERO_OP(i32x4, 32);
+                        break;
+                    }
+                    case SIMD_v128_load64_zero:
+                    {
+                        SIMD_LOAD_ZERO_OP(i64x2, 64);
+                        break;
+                    }
+
+#define SIMD_SINGLE_OP(simde_func)                                           \
+    do {                                                                     \
+        V128 v1 = POP_V128();                                                \
+        addr_ret = GET_OFFSET();                                             \
+                                                                             \
+        simde_v128_t simde_result = simde_func(SIMD_V128_TO_SIMDE_V128(v1)); \
+                                                                             \
+        V128 result;                                                         \
+        SIMDE_V128_TO_SIMD_V128(simde_result, result);                       \
+                                                                             \
+        PUT_V128_TO_ADDR(frame_lp + addr_ret, result);                       \
+    } while (0)
+
+                    /* Float conversion */
+                    case SIMD_f32x4_demote_f64x2_zero:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f32x4_demote_f64x2_zero);
+                        break;
+                    }
+                    case SIMD_f64x2_promote_low_f32x4_zero:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f64x2_promote_low_f32x4);
+                        break;
+                    }
+
+                    /* i8x16 operations */
+                    case SIMD_i8x16_abs:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i8x16_abs);
+                        break;
+                    }
+                    case SIMD_i8x16_neg:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i8x16_neg);
+                        break;
+                    }
+                    case SIMD_i8x16_popcnt:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i8x16_popcnt);
+                        break;
+                    }
+                    case SIMD_i8x16_all_true:
+                    {
+                        V128 v1 = POP_V128();
+
+                        bool result = simde_wasm_i8x16_all_true(
+                            SIMD_V128_TO_SIMDE_V128(v1));
+
+                        addr_ret = GET_OFFSET();
+                        frame_lp[addr_ret] = result;
+                        break;
+                    }
+
+                    case SIMD_i8x16_bitmask:
+                    {
+                        V128 v1 = POP_V128();
+
+                        uint32_t result = simde_wasm_i8x16_bitmask(
+                            SIMD_V128_TO_SIMDE_V128(v1));
+
+                        addr_ret = GET_OFFSET();
+                        frame_lp[addr_ret] = result;
+                        break;
+                    }
+                    case SIMD_i8x16_narrow_i16x8_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i8x16_narrow_i16x8);
+                        break;
+                    }
+                    case SIMD_i8x16_narrow_i16x8_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u8x16_narrow_i16x8);
+                        break;
+                    }
+                    case SIMD_f32x4_ceil:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f32x4_ceil);
+                        break;
+                    }
+                    case SIMD_f32x4_floor:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f32x4_floor);
+                        break;
+                    }
+                    case SIMD_f32x4_trunc:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f32x4_trunc);
+                        break;
+                    }
+                    case SIMD_f32x4_nearest:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f32x4_nearest);
+                        break;
+                    }
+#define SIMD_LANE_SHIFT(simde_func)                     \
+    do {                                                \
+        int32 c = POP_I32();                            \
+        V128 v1 = POP_V128();                           \
+        addr_ret = GET_OFFSET();                        \
+                                                        \
+        simde_v128_t simde_result =                     \
+            simde_func(SIMD_V128_TO_SIMDE_V128(v1), c); \
+                                                        \
+        V128 result;                                    \
+        SIMDE_V128_TO_SIMD_V128(simde_result, result);  \
+                                                        \
+        PUT_V128_TO_ADDR(frame_lp + addr_ret, result);  \
+    } while (0)
+                    case SIMD_i8x16_shl:
+                    {
+                        SIMD_LANE_SHIFT(simde_wasm_i8x16_shl);
+                        break;
+                    }
+                    case SIMD_i8x16_shr_s:
+                    {
+                        SIMD_LANE_SHIFT(simde_wasm_i8x16_shr);
+                        break;
+                    }
+                    case SIMD_i8x16_shr_u:
+                    {
+                        SIMD_LANE_SHIFT(simde_wasm_u8x16_shr);
+                        break;
+                    }
+                    case SIMD_i8x16_add:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i8x16_add);
+                        break;
+                    }
+                    case SIMD_i8x16_add_sat_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i8x16_add_sat);
+                        break;
+                    }
+                    case SIMD_i8x16_add_sat_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u8x16_add_sat);
+                        break;
+                    }
+                    case SIMD_i8x16_sub:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i8x16_sub);
+                        break;
+                    }
+                    case SIMD_i8x16_sub_sat_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i8x16_sub_sat);
+                        break;
+                    }
+                    case SIMD_i8x16_sub_sat_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u8x16_sub_sat);
+                        break;
+                    }
+                    case SIMD_f64x2_ceil:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f64x2_ceil);
+                        break;
+                    }
+                    case SIMD_f64x2_floor:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f64x2_floor);
+                        break;
+                    }
+                    case SIMD_i8x16_min_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i8x16_min);
+                        break;
+                    }
+                    case SIMD_i8x16_min_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u8x16_min);
+                        break;
+                    }
+                    case SIMD_i8x16_max_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i8x16_max);
+                        break;
+                    }
+                    case SIMD_i8x16_max_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u8x16_max);
+                        break;
+                    }
+                    case SIMD_f64x2_trunc:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f64x2_trunc);
+                        break;
+                    }
+                    case SIMD_i8x16_avgr_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u8x16_avgr);
+                        break;
+                    }
+                    case SIMD_i16x8_extadd_pairwise_i8x16_s:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i16x8_extadd_pairwise_i8x16);
+                        break;
+                    }
+                    case SIMD_i16x8_extadd_pairwise_i8x16_u:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_u16x8_extadd_pairwise_u8x16);
+                        break;
+                    }
+                    case SIMD_i32x4_extadd_pairwise_i16x8_s:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i32x4_extadd_pairwise_i16x8);
+                        break;
+                    }
+                    case SIMD_i32x4_extadd_pairwise_i16x8_u:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_u32x4_extadd_pairwise_u16x8);
+                        break;
+                    }
+
+                    /* i16x8 operations */
+                    case SIMD_i16x8_abs:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i16x8_abs);
+                        break;
+                    }
+                    case SIMD_i16x8_neg:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i16x8_neg);
+                        break;
+                    }
+                    case SIMD_i16x8_q15mulr_sat_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_q15mulr_sat);
+                        break;
+                    }
+                    case SIMD_i16x8_all_true:
+                    {
+                        V128 v1 = POP_V128();
+
+                        bool result = simde_wasm_i16x8_all_true(
+                            SIMD_V128_TO_SIMDE_V128(v1));
+
+                        addr_ret = GET_OFFSET();
+                        frame_lp[addr_ret] = result;
+                        break;
+                    }
+                    case SIMD_i16x8_bitmask:
+                    {
+                        V128 v1 = POP_V128();
+
+                        uint32_t result = simde_wasm_i16x8_bitmask(
+                            SIMD_V128_TO_SIMDE_V128(v1));
+
+                        addr_ret = GET_OFFSET();
+                        frame_lp[addr_ret] = result;
+                        break;
+                    }
+                    case SIMD_i16x8_narrow_i32x4_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_narrow_i32x4);
+                        break;
+                    }
+                    case SIMD_i16x8_narrow_i32x4_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u16x8_narrow_i32x4);
+                        break;
+                    }
+                    case SIMD_i16x8_extend_low_i8x16_s:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i16x8_extend_low_i8x16);
+                        break;
+                    }
+                    case SIMD_i16x8_extend_high_i8x16_s:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i16x8_extend_high_i8x16);
+                        break;
+                    }
+                    case SIMD_i16x8_extend_low_i8x16_u:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_u16x8_extend_low_u8x16);
+                        break;
+                    }
+                    case SIMD_i16x8_extend_high_i8x16_u:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_u16x8_extend_high_u8x16);
+                        break;
+                    }
+                    case SIMD_i16x8_shl:
+                    {
+                        SIMD_LANE_SHIFT(simde_wasm_i16x8_shl);
+                        break;
+                    }
+                    case SIMD_i16x8_shr_s:
+                    {
+                        SIMD_LANE_SHIFT(simde_wasm_i16x8_shr);
+                        break;
+                    }
+                    case SIMD_i16x8_shr_u:
+                    {
+                        SIMD_LANE_SHIFT(simde_wasm_u16x8_shr);
+                        break;
+                    }
+                    case SIMD_i16x8_add:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_add);
+                        break;
+                    }
+                    case SIMD_i16x8_add_sat_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_add_sat);
+                        break;
+                    }
+                    case SIMD_i16x8_add_sat_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u16x8_add_sat);
+                        break;
+                    }
+                    case SIMD_i16x8_sub:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_sub);
+                        break;
+                    }
+                    case SIMD_i16x8_sub_sat_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_sub_sat);
+                        break;
+                    }
+                    case SIMD_i16x8_sub_sat_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u16x8_sub_sat);
+                        break;
+                    }
+                    case SIMD_f64x2_nearest:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f64x2_nearest);
+                        break;
+                    }
+                    case SIMD_i16x8_mul:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_mul);
+                        break;
+                    }
+                    case SIMD_i16x8_min_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_min);
+                        break;
+                    }
+                    case SIMD_i16x8_min_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u16x8_min);
+                        break;
+                    }
+                    case SIMD_i16x8_max_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_max);
+                        break;
+                    }
+                    case SIMD_i16x8_max_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u16x8_max);
+                        break;
+                    }
+                    case SIMD_i16x8_avgr_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u16x8_avgr);
+                        break;
+                    }
+                    case SIMD_i16x8_extmul_low_i8x16_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_extmul_low_i8x16);
+                        break;
+                    }
+                    case SIMD_i16x8_extmul_high_i8x16_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i16x8_extmul_high_i8x16);
+                        break;
+                    }
+                    case SIMD_i16x8_extmul_low_i8x16_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u16x8_extmul_low_u8x16);
+                        break;
+                    }
+                    case SIMD_i16x8_extmul_high_i8x16_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u16x8_extmul_high_u8x16);
+                        break;
+                    }
+
+                    /* i32x4 operations */
+                    case SIMD_i32x4_abs:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i32x4_abs);
+                        break;
+                    }
+                    case SIMD_i32x4_neg:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i32x4_neg);
+                        break;
+                    }
+                    case SIMD_i32x4_all_true:
+                    {
+                        V128 v1 = POP_V128();
+
+                        bool result = simde_wasm_i32x4_all_true(
+                            SIMD_V128_TO_SIMDE_V128(v1));
+
+                        addr_ret = GET_OFFSET();
+                        frame_lp[addr_ret] = result;
+                        break;
+                    }
+                    case SIMD_i32x4_bitmask:
+                    {
+                        V128 v1 = POP_V128();
+
+                        uint32_t result = simde_wasm_i32x4_bitmask(
+                            SIMD_V128_TO_SIMDE_V128(v1));
+
+                        addr_ret = GET_OFFSET();
+                        frame_lp[addr_ret] = result;
+                        break;
+                    }
+                    case SIMD_i32x4_extend_low_i16x8_s:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i32x4_extend_low_i16x8);
+                        break;
+                    }
+                    case SIMD_i32x4_extend_high_i16x8_s:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i32x4_extend_high_i16x8);
+                        break;
+                    }
+                    case SIMD_i32x4_extend_low_i16x8_u:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_u32x4_extend_low_u16x8);
+                        break;
+                    }
+                    case SIMD_i32x4_extend_high_i16x8_u:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_u32x4_extend_high_u16x8);
+                        break;
+                    }
+                    case SIMD_i32x4_shl:
+                    {
+                        SIMD_LANE_SHIFT(simde_wasm_i32x4_shl);
+                        break;
+                    }
+                    case SIMD_i32x4_shr_s:
+                    {
+                        SIMD_LANE_SHIFT(simde_wasm_i32x4_shr);
+                        break;
+                    }
+                    case SIMD_i32x4_shr_u:
+                    {
+                        SIMD_LANE_SHIFT(simde_wasm_u32x4_shr);
+                        break;
+                    }
+                    case SIMD_i32x4_add:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i32x4_add);
+                        break;
+                    }
+                    case SIMD_i32x4_sub:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i32x4_sub);
+                        break;
+                    }
+                    case SIMD_i32x4_mul:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i32x4_mul);
+                        break;
+                    }
+                    case SIMD_i32x4_min_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i32x4_min);
+                        break;
+                    }
+                    case SIMD_i32x4_min_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u32x4_min);
+                        break;
+                    }
+                    case SIMD_i32x4_max_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i32x4_max);
+                        break;
+                    }
+                    case SIMD_i32x4_max_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u32x4_max);
+                        break;
+                    }
+                    case SIMD_i32x4_dot_i16x8_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i32x4_dot_i16x8);
+                        break;
+                    }
+                    case SIMD_i32x4_extmul_low_i16x8_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i32x4_extmul_low_i16x8);
+                        break;
+                    }
+                    case SIMD_i32x4_extmul_high_i16x8_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i32x4_extmul_high_i16x8);
+                        break;
+                    }
+                    case SIMD_i32x4_extmul_low_i16x8_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u32x4_extmul_low_u16x8);
+                        break;
+                    }
+                    case SIMD_i32x4_extmul_high_i16x8_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u32x4_extmul_high_u16x8);
+                        break;
+                    }
+
+                    /* i64x2 operations */
+                    case SIMD_i64x2_abs:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i64x2_abs);
+                        break;
+                    }
+                    case SIMD_i64x2_neg:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i64x2_neg);
+                        break;
+                    }
+                    case SIMD_i64x2_all_true:
+                    {
+                        V128 v1 = POP_V128();
+
+                        bool result = simde_wasm_i64x2_all_true(
+                            SIMD_V128_TO_SIMDE_V128(v1));
+
+                        addr_ret = GET_OFFSET();
+                        frame_lp[addr_ret] = result;
+                        break;
+                    }
+                    case SIMD_i64x2_bitmask:
+                    {
+                        V128 v1 = POP_V128();
+
+                        uint32_t result = simde_wasm_i64x2_bitmask(
+                            SIMD_V128_TO_SIMDE_V128(v1));
+
+                        addr_ret = GET_OFFSET();
+                        frame_lp[addr_ret] = result;
+                        break;
+                    }
+                    case SIMD_i64x2_extend_low_i32x4_s:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i64x2_extend_low_i32x4);
+                        break;
+                    }
+                    case SIMD_i64x2_extend_high_i32x4_s:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i64x2_extend_high_i32x4);
+                        break;
+                    }
+                    case SIMD_i64x2_extend_low_i32x4_u:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_u64x2_extend_low_u32x4);
+                        break;
+                    }
+                    case SIMD_i64x2_extend_high_i32x4_u:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_u64x2_extend_high_u32x4);
+                        break;
+                    }
+                    case SIMD_i64x2_shl:
+                    {
+                        SIMD_LANE_SHIFT(simde_wasm_i64x2_shl);
+                        break;
+                    }
+                    case SIMD_i64x2_shr_s:
+                    {
+                        SIMD_LANE_SHIFT(simde_wasm_i64x2_shr);
+                        break;
+                    }
+                    case SIMD_i64x2_shr_u:
+                    {
+                        SIMD_LANE_SHIFT(simde_wasm_u64x2_shr);
+                        break;
+                    }
+                    case SIMD_i64x2_add:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i64x2_add);
+                        break;
+                    }
+                    case SIMD_i64x2_sub:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i64x2_sub);
+                        break;
+                    }
+                    case SIMD_i64x2_mul:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i64x2_mul);
+                        break;
+                    }
+                    case SIMD_i64x2_eq:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i64x2_eq);
+                        break;
+                    }
+                    case SIMD_i64x2_ne:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i64x2_ne);
+                        break;
+                    }
+                    case SIMD_i64x2_lt_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i64x2_lt);
+                        break;
+                    }
+                    case SIMD_i64x2_gt_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i64x2_gt);
+                        break;
+                    }
+                    case SIMD_i64x2_le_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i64x2_le);
+                        break;
+                    }
+                    case SIMD_i64x2_ge_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i64x2_ge);
+                        break;
+                    }
+                    case SIMD_i64x2_extmul_low_i32x4_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i64x2_extmul_low_i32x4);
+                        break;
+                    }
+                    case SIMD_i64x2_extmul_high_i32x4_s:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_i64x2_extmul_high_i32x4);
+                        break;
+                    }
+                    case SIMD_i64x2_extmul_low_i32x4_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u64x2_extmul_low_u32x4);
+                        break;
+                    }
+                    case SIMD_i64x2_extmul_high_i32x4_u:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_u64x2_extmul_high_u32x4);
+                        break;
+                    }
+
+                    /* f32x4 opertions */
+                    case SIMD_f32x4_abs:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f32x4_abs);
+                        break;
+                    }
+                    case SIMD_f32x4_neg:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f32x4_neg);
+                        break;
+                    }
+                    case SIMD_f32x4_sqrt:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f32x4_sqrt);
+                        break;
+                    }
+                    case SIMD_f32x4_add:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f32x4_add);
+                        break;
+                    }
+                    case SIMD_f32x4_sub:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f32x4_sub);
+                        break;
+                    }
+                    case SIMD_f32x4_mul:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f32x4_mul);
+                        break;
+                    }
+                    case SIMD_f32x4_div:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f32x4_div);
+                        break;
+                    }
+                    case SIMD_f32x4_min:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f32x4_min);
+                        break;
+                    }
+                    case SIMD_f32x4_max:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f32x4_max);
+                        break;
+                    }
+                    case SIMD_f32x4_pmin:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f32x4_pmin);
+                        break;
+                    }
+                    case SIMD_f32x4_pmax:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f32x4_pmax);
+                        break;
+                    }
+
+                    /* f64x2 operations */
+                    case SIMD_f64x2_abs:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f64x2_abs);
+                        break;
+                    }
+                    case SIMD_f64x2_neg:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f64x2_neg);
+                        break;
+                    }
+                    case SIMD_f64x2_sqrt:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f64x2_sqrt);
+                        break;
+                    }
+                    case SIMD_f64x2_add:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f64x2_add);
+                        break;
+                    }
+                    case SIMD_f64x2_sub:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f64x2_sub);
+                        break;
+                    }
+                    case SIMD_f64x2_mul:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f64x2_mul);
+                        break;
+                    }
+                    case SIMD_f64x2_div:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f64x2_div);
+                        break;
+                    }
+                    case SIMD_f64x2_min:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f64x2_min);
+                        break;
+                    }
+                    case SIMD_f64x2_max:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f64x2_max);
+                        break;
+                    }
+                    case SIMD_f64x2_pmin:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f64x2_pmin);
+                        break;
+                    }
+                    case SIMD_f64x2_pmax:
+                    {
+                        SIMD_DOUBLE_OP(simde_wasm_f64x2_pmax);
+                        break;
+                    }
+
+                    /* Conversion operations */
+                    case SIMD_i32x4_trunc_sat_f32x4_s:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i32x4_trunc_sat_f32x4);
+                        break;
+                    }
+                    case SIMD_i32x4_trunc_sat_f32x4_u:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_u32x4_trunc_sat_f32x4);
+                        break;
+                    }
+                    case SIMD_f32x4_convert_i32x4_s:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f32x4_convert_i32x4);
+                        break;
+                    }
+                    case SIMD_f32x4_convert_i32x4_u:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f32x4_convert_u32x4);
+                        break;
+                    }
+                    case SIMD_i32x4_trunc_sat_f64x2_s_zero:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_i32x4_trunc_sat_f64x2_zero);
+                        break;
+                    }
+                    case SIMD_i32x4_trunc_sat_f64x2_u_zero:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_u32x4_trunc_sat_f64x2_zero);
+                        break;
+                    }
+                    case SIMD_f64x2_convert_low_i32x4_s:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f64x2_convert_low_i32x4);
+                        break;
+                    }
+                    case SIMD_f64x2_convert_low_i32x4_u:
+                    {
+                        SIMD_SINGLE_OP(simde_wasm_f64x2_convert_low_u32x4);
+                        break;
+                    }
+
+                    default:
+                        wasm_set_exception(module, "unsupported SIMD opcode");
+                }
+                HANDLE_OP_END();
+            }
+#endif
 
             HANDLE_OP(WASM_OP_CALL)
             {
@@ -5736,6 +7551,9 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
         HANDLE_OP(EXT_OP_LOOP)
         HANDLE_OP(EXT_OP_IF)
         HANDLE_OP(EXT_OP_BR_TABLE_CACHE)
+#if WASM_ENABLE_SIMDE == 0
+        HANDLE_OP(WASM_OP_SIMD_PREFIX)
+#endif
         {
             wasm_set_exception(module, "unsupported opcode");
             goto got_exception;
@@ -5775,6 +7593,13 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
             }
         }
         frame->lp = frame->operand + cur_func->const_cell_num;
+        if ((uint8 *)(frame->lp + cur_func->param_cell_num)
+            > exec_env->wasm_stack.top_boundary) {
+            if (lp_base)
+                wasm_runtime_free(lp_base);
+            wasm_set_exception(module, "wasm operand stack overflow");
+            goto got_exception;
+        }
         if (lp - lp_base > 0) {
             word_copy(frame->lp, lp_base, lp - lp_base);
         }
@@ -5783,6 +7608,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
         FREE_FRAME(exec_env, frame);
         frame_ip += cur_func->param_count * sizeof(int16);
         wasm_exec_env_set_cur_frame(exec_env, (WASMRuntimeFrame *)prev_frame);
+        is_return_call = true;
         goto call_func_from_entry;
     }
 #endif /* WASM_ENABLE_TAIL_CALL != 0 || WASM_ENABLE_GC != 0 */
@@ -5813,8 +7639,14 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
         }
 
         for (i = 0; i < cur_func->param_count; i++) {
-            if (cur_func->param_types[i] == VALUE_TYPE_I64
-                || cur_func->param_types[i] == VALUE_TYPE_F64) {
+            if (cur_func->param_types[i] == VALUE_TYPE_V128) {
+                PUT_V128_TO_ADDR(
+                    outs_area->lp,
+                    GET_OPERAND_V128(2 * (cur_func->param_count - i - 1)));
+                outs_area->lp += 4;
+            }
+            else if (cur_func->param_types[i] == VALUE_TYPE_I64
+                     || cur_func->param_types[i] == VALUE_TYPE_F64) {
                 PUT_I64_TO_ADDR(
                     outs_area->lp,
                     GET_OPERAND(uint64, I64,
@@ -5855,6 +7687,9 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
         }
         SYNC_ALL_TO_FRAME();
         prev_frame = frame;
+#if WASM_ENABLE_TAIL_CALL != 0 || WASM_ENABLE_GC != 0
+        is_return_call = false;
+#endif
     }
 
     call_func_from_entry:
@@ -5872,9 +7707,20 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                                              prev_frame);
             }
 
-            prev_frame = frame->prev_frame;
-            cur_func = frame->function;
-            UPDATE_ALL_FROM_FRAME();
+#if WASM_ENABLE_TAIL_CALL != 0 || WASM_ENABLE_GC != 0
+            if (is_return_call) {
+                /* the frame was freed before tail calling and
+                   the prev_frame was set as exec_env's cur_frame,
+                   so here we recover context from prev_frame */
+                RECOVER_CONTEXT(prev_frame);
+            }
+            else
+#endif
+            {
+                prev_frame = frame->prev_frame;
+                cur_func = frame->function;
+                UPDATE_ALL_FROM_FRAME();
+            }
 
             /* update memory size, no need to update memory ptr as
                it isn't changed in wasm_enlarge_memory */
@@ -5882,7 +7728,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
     || WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS == 0 \
     || WASM_ENABLE_BULK_MEMORY != 0
             if (memory)
-                linear_mem_size = get_linear_mem_size();
+                linear_mem_size = GET_LINEAR_MEMORY_SIZE(memory);
 #endif
             if (wasm_copy_exception(module, NULL))
                 goto got_exception;
@@ -5890,6 +7736,9 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
         else {
             WASMFunction *cur_wasm_func = cur_func->u.func;
             uint32 cell_num_of_local_stack;
+#if WASM_ENABLE_REF_TYPES != 0 && WASM_ENABLE_GC == 0
+            uint32 i, local_cell_idx;
+#endif
 
             cell_num_of_local_stack = cur_func->param_cell_num
                                       + cur_func->local_cell_num
@@ -5931,6 +7780,19 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
             /* Initialize the local variables */
             memset(frame_lp + cur_func->param_cell_num, 0,
                    (uint32)(cur_func->local_cell_num * 4));
+
+#if WASM_ENABLE_REF_TYPES != 0 && WASM_ENABLE_GC == 0
+            /* externref/funcref should be NULL_REF rather than 0 */
+            local_cell_idx = cur_func->param_cell_num;
+            for (i = 0; i < cur_wasm_func->local_count; i++) {
+                if (cur_wasm_func->local_types[i] == VALUE_TYPE_EXTERNREF
+                    || cur_wasm_func->local_types[i] == VALUE_TYPE_FUNCREF) {
+                    *(frame_lp + local_cell_idx) = NULL_REF;
+                }
+                local_cell_idx +=
+                    wasm_value_type_cell_num(cur_wasm_func->local_types[i]);
+            }
+#endif
 
 #if WASM_ENABLE_GC != 0
             /* frame->ip is used during GC root set enumeration, so we must
@@ -5976,7 +7838,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 
 #if !defined(OS_ENABLE_HW_BOUND_CHECK)              \
     || WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS == 0 \
-    || WASM_ENABLE_BULK_MEMORY != 0
+    || WASM_ENABLE_BULK_MEMORY_OPT != 0
     out_of_bounds:
         wasm_set_exception(module, "out of bounds memory access");
 #endif
@@ -5994,7 +7856,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 
 #if WASM_ENABLE_LABELS_AS_VALUES != 0
 void **
-wasm_interp_get_handle_table()
+wasm_interp_get_handle_table(void)
 {
     WASMModuleInstance module;
     memset(&module, 0, sizeof(WASMModuleInstance));
@@ -6078,12 +7940,13 @@ wasm_interp_call_wasm(WASMModuleInstance *module_inst, WASMExecEnv *exec_env,
     }
     argc = function->param_cell_num;
 
-    RECORD_STACK_USAGE(exec_env, (uint8 *)&prev_frame);
-#if !(defined(OS_ENABLE_HW_BOUND_CHECK) \
-      && WASM_DISABLE_STACK_HW_BOUND_CHECK == 0)
-    if ((uint8 *)&prev_frame < exec_env->native_stack_boundary) {
-        wasm_set_exception((WASMModuleInstance *)exec_env->module_inst,
-                           "native stack overflow");
+#if defined(OS_ENABLE_HW_BOUND_CHECK) && WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
+    /*
+     * wasm_runtime_detect_native_stack_overflow is done by
+     * call_wasm_with_hw_bound_check.
+     */
+#else
+    if (!wasm_runtime_detect_native_stack_overflow(exec_env)) {
         return;
     }
 #endif

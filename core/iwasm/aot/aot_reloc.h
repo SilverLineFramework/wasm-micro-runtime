@@ -125,6 +125,10 @@ typedef struct {
     REG_SYM(aot_intrinsic_i64_rem_u),     \
     REG_SYM(aot_intrinsic_i64_bit_or),    \
     REG_SYM(aot_intrinsic_i64_bit_and),   \
+    REG_SYM(aot_intrinsic_i64_mul),       \
+    REG_SYM(aot_intrinsic_i64_shl),       \
+    REG_SYM(aot_intrinsic_i64_shr_s),     \
+    REG_SYM(aot_intrinsic_i64_shr_u),     \
     REG_SYM(aot_intrinsic_i32_div_s),     \
     REG_SYM(aot_intrinsic_i32_div_u),     \
     REG_SYM(aot_intrinsic_i32_rem_s),     \
@@ -146,6 +150,7 @@ typedef struct {
     REG_SYM(aot_array_init_with_data),     \
     REG_SYM(aot_create_func_obj),          \
     REG_SYM(aot_obj_is_instance_of),       \
+    REG_SYM(aot_func_type_is_super_of),    \
     REG_SYM(aot_rtt_type_new),             \
     REG_SYM(wasm_array_obj_copy),          \
     REG_SYM(wasm_array_obj_new),           \
@@ -183,6 +188,13 @@ typedef struct {
 #define REG_STRINGREF_SYM()
 #endif
 
+#if WASM_ENABLE_SHARED_HEAP != 0
+#define REG_SHARED_HEAP_SYM()                 \
+    REG_SYM(wasm_runtime_check_and_update_last_used_shared_heap),
+#else
+#define REG_SHARED_HEAP_SYM()
+#endif
+
 #define REG_COMMON_SYMBOLS                \
     REG_SYM(aot_set_exception_with_id),   \
     REG_SYM(aot_invoke_native),           \
@@ -217,6 +229,7 @@ typedef struct {
     REG_GC_SYM()                          \
     REG_STRINGREF_SYM()                   \
     REG_WALI_SYM()                        \
+    REG_SHARED_HEAP_SYM()                 \
 
 #define CHECK_RELOC_OFFSET(data_size) do {              \
     if (!check_reloc_offset(target_section_size,        \
@@ -229,7 +242,7 @@ SymbolMap *
 get_target_symbol_map(uint32 *sym_num);
 
 uint32
-get_plt_table_size();
+get_plt_table_size(void);
 
 void
 init_plt_table(uint8 *plt);

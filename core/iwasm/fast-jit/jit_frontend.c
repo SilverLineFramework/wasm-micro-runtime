@@ -31,7 +31,7 @@ get_global_base_offset(const WASMModule *module)
         * (module->import_memory_count + module->memory_count);
 
 #if WASM_ENABLE_JIT != 0
-    /* If the module dosen't have memory, reserve one mem_info space
+    /* If the module doesn't have memory, reserve one mem_info space
        with empty content to align with llvm jit compiler */
     if (mem_inst_size == 0)
         mem_inst_size = (uint32)sizeof(WASMMemoryInstance);
@@ -76,11 +76,12 @@ jit_frontend_get_table_inst_offset(const WASMModule *module, uint32 tbl_idx)
 
         offset += (uint32)offsetof(WASMTableInstance, elems);
 #if WASM_ENABLE_MULTI_MODULE != 0
-        offset += (uint32)sizeof(uint32) * import_table->max_size;
+        offset += (uint32)sizeof(uint32) * import_table->table_type.max_size;
 #else
         offset += (uint32)sizeof(uint32)
-                  * (import_table->possible_grow ? import_table->max_size
-                                                 : import_table->init_size);
+                  * (import_table->table_type.possible_grow
+                         ? import_table->table_type.max_size
+                         : import_table->table_type.init_size);
 #endif
 
         i++;
@@ -97,10 +98,13 @@ jit_frontend_get_table_inst_offset(const WASMModule *module, uint32 tbl_idx)
 
         offset += (uint32)offsetof(WASMTableInstance, elems);
 #if WASM_ENABLE_MULTI_MODULE != 0
-        offset += (uint32)sizeof(table_elem_type_t) * table->max_size;
+        offset +=
+            (uint32)sizeof(table_elem_type_t) * table->table_type.max_size;
 #else
-        offset += (uint32)sizeof(table_elem_type_t)
-                  * (table->possible_grow ? table->max_size : table->init_size);
+        offset +=
+            (uint32)sizeof(table_elem_type_t)
+            * (table->table_type.possible_grow ? table->table_type.max_size
+                                               : table->table_type.init_size);
 #endif
 
         i++;
@@ -234,7 +238,7 @@ is_shared_memory(WASMModule *module, uint32 mem_idx)
 
     if (mem_idx < module->import_memory_count) {
         memory_import = &(module->import_memories[mem_idx].u.memory);
-        is_shared = memory_import->flags & 0x02 ? true : false;
+        is_shared = memory_import->mem_type.flags & 0x02 ? true : false;
     }
     else {
         memory = &module->memories[mem_idx - module->import_memory_count];
@@ -1165,7 +1169,7 @@ init_func_translation(JitCompContext *cc)
     time_started = jit_cc_new_reg_I64(cc);
     /* Call os_time_thread_cputime_us() to get time_started firstly
        as there is stack frame switching below, calling native in them
-       may cause register spilling work inproperly */
+       may cause register spilling work improperly */
     if (!jit_emit_callnative(cc, os_time_thread_cputime_us, time_started, NULL,
                              0)) {
         return NULL;
@@ -1242,6 +1246,21 @@ init_func_translation(JitCompContext *cc)
         GEN_INSN(STI32, NEW_CONST(I32, 0), cc->fp_reg,
                  NEW_CONST(I32, local_off));
     }
+
+#if WASM_ENABLE_REF_TYPES != 0 && WASM_ENABLE_GC == 0
+    /* externref/funcref should be NULL_REF rather than 0 */
+    local_off = (uint32)offsetof(WASMInterpFrame, lp)
+                + cur_wasm_func->param_cell_num * 4;
+    for (i = 0; i < cur_wasm_func->local_count; i++) {
+        if (cur_wasm_func->local_types[i] == VALUE_TYPE_EXTERNREF
+            || cur_wasm_func->local_types[i] == VALUE_TYPE_FUNCREF) {
+            GEN_INSN(STI32, NEW_CONST(I32, NULL_REF), cc->fp_reg,
+                     NEW_CONST(I32, local_off));
+        }
+        local_off +=
+            4 * wasm_value_type_cell_num(cur_wasm_func->local_types[i]);
+    }
+#endif
 
     return jit_frame;
 }
@@ -1495,7 +1514,9 @@ jit_compile_func(JitCompContext *cc)
             case EXT_OP_LOOP:
             case EXT_OP_IF:
             {
-                read_leb_uint32(frame_ip, frame_ip_end, type_idx);
+                read_leb_int32(frame_ip, frame_ip_end, type_idx);
+                /* type index was checked in wasm loader */
+                bh_assert(type_idx < cc->cur_wasm_module->type_count);
                 func_type = cc->cur_wasm_module->types[type_idx];
                 param_count = func_type->param_count;
                 param_types = func_type->types;
@@ -1606,7 +1627,7 @@ jit_compile_func(JitCompContext *cc)
 
                 read_leb_uint32(frame_ip, frame_ip_end, type_idx);
 
-#if WASM_ENABLE_REF_TYPES != 0
+#if WASM_ENABLE_CALL_INDIRECT_OVERLONG != 0
                 read_leb_uint32(frame_ip, frame_ip_end, tbl_idx);
 #else
                 frame_ip++;
@@ -2315,6 +2336,8 @@ jit_compile_func(JitCompContext *cc)
                             return false;
                         break;
                     }
+#endif /* WASM_ENABLE_BULK_MEMORY */
+#if WASM_ENABLE_BULK_MEMORY_OPT != 0
                     case WASM_OP_MEMORY_COPY:
                     {
                         uint32 src_mem_idx, dst_mem_idx;
@@ -2332,7 +2355,7 @@ jit_compile_func(JitCompContext *cc)
                             return false;
                         break;
                     }
-#endif /* WASM_ENABLE_BULK_MEMORY */
+#endif /* WASM_ENABLE_BULK_MEMORY_OPT */
 #if WASM_ENABLE_REF_TYPES != 0
                     case WASM_OP_TABLE_INIT:
                     {

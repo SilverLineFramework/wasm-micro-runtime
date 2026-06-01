@@ -1,14 +1,871 @@
+## WAMR-2.4.3
+
+### Breaking Changes
+
+### New Features
+
+### Bug Fixes
+
+- libc-wasi: add missing pointer validations to socket functions (#4611) (#4665)
+
+### Enhancements
+
+### Others
+
+---
+
+## WAMR-2.4.2
+
+### Breaking Changes
+
+### New Features
+
+### Bug Fixes
+
+- CVE-2025-58749. Fix a potential hang issue in LLVMJIT mode
+
+### Enhancements
+
+### Others
+
+---
+
+## WAMR-2.4.1
+
+### Breaking Changes
+
+- wasi_socket_ext.c: fix error reporting (#4476)
+- lib-socket: make getaddrinfo return EAI\_ values (#4498)
+- bump AOT_CURRENT_VERSION for extended-const (#4511)
+
+### New Features
+
+### Bug Fixes
+
+- modify macro related to simde when WASM_OP_SELECT_128 (#4461)
+- posix os_socket_accept: stop assuming socklen_t is unsigned int (#4488)
+- wasi_socket_ext.c: fix the number of getaddrinfo results (#4466)
+- Fix typos (#4472)
+- fix regression running_config.json (#4477)
+- posix os_socket_addr_resolve: relax compatibility check (#4469)
+- Add validation for recursive type count in loader (#4440)
+
+### Enhancements
+
+- Add CI on Zephyr (#4336)
+- introduce wasm_runtime_instantiate_ex2 (#4444)
+- Add a CLI option to specify shared heap size on Windows platform (#4503)
+- wasi-nn: add a comment on load_by_name_with_config (#4492)
+- nn-cli: add an option to use load_by_name (#4490)
+- wamr-wasi-extensions: document (#4493)
+- doc/socket_api.md: some historical notes (#4494)
+- lib-socket: implement getsockopt(SOL_SOCKET,SO_TYPE) (#4458)
+
+### Others
+
+- build(deps): Bump github/codeql-action from 3.29.2 to 3.29.3 (#4507)
+
+## WAMR-2.4.0
+
+### Breaking Changes
+
+- Refactor copy callstack feature (#4401)
+- Enable WAMR_BUILD_WASI_EPHEMERAL_NN by default (#4381)
+- Enable aot memory64 sw bounds checks by default (#4350)
+
+### New Features
+
+- Support extended constant expressions (#4432)
+- Shared heap enhancements for Interpreter and AOT (#4400)
+
+### Bug Fixes
+
+- posix os_socket_addr_resolve: return the consistent max_info_size (#4467)
+- fix a wamrc debug mode compile issue (#4470)
+- wasi-nn: do not pretend to support legacy abi in openvino and llamacpp (#4468)
+- appease a few compiler warnings (-Wstrict-prototypes) (#4465)
+- enable aux stack frame for aot compiler fuzz test (#4462)
+- improve logic of `heap_type` validation when `ref.null` (#4372)
+- wasi_nn_llamacpp.c: explicitly reject unimplemented input index (#4446)
+- wasi: avoid user-triggerable 0-sized allocations (#4452)
+- Fix socket shutdown (#12) (#4449)
+- wasi_nn_llamacpp.c: validate input tensor type/dimensions (#4442)
+- wasi_nn_llamacpp.c: reject invalid graph and execution context (#4422)
+- wasi_nn_openvino.c: avoid self-assignment warning (#4434)
+- Fix potential integer overflow issues (#4429)
+- Improve run.py of regression (#4417)
+- wasi-nn: reduce code duplication a bit (#4433)
+- Refactor AOTObjectData definition to use a forward declaration (#4428)
+- CI: revert SGX retry attempts (#4421)
+- loader: fix a potential overflow issue (#4427)
+- wasi_nn_openvino.c: fix a debug build (#4416)
+- Fix few shadow warnings (#4409)
+- wasi_nn_llamacpp.c: remove an unused variable (#4415)
+- wasi_nn_llamacpp.c: fix buffer overruns in set_input (#4420)
+- wasi-nn: make the host use the wasi_ephemeral_nn version of tensor_data (#4411)
+- Collective fix (#4413)
+- fix bug in bh_vector when extending (#4414)
+- wasi_nn_llamacpp.c: make this compilable (#4403)
+- Fix handling of non-nullable global_type during global import (#4408)
+- loader: add type index checking (#4402)
+- wasi_nn_tensorflowlite.cpp: fix get_output return size (#4390)
+- wasi-nn: fix context lifetime issues (#4396)
+- CI: fix the description of upload_url (#4407)
+- wamr-wasi-extensions/socket: disable reference-types (#4392)
+- wasi_nn_openvino.c: implement multiple models per instance (#4380)
+- Improve spec test execution by adding retry logic for transient errors (#4393)
+- wasi-nn: add minimum serialization on WASINNContext (#4387)
+- deprecate legacy WAMR-specific "wasi_nn" module (#4382)
+- wasi-nn: fix tensor_data abi for wasi_ephemeral_nn (#4379)
+- core/iwasm/libraries/wasi-nn/test: use the correct version of keras (#4383)
+- Fix several issues related to night-run CI and test scripts. (#4385)
+- wasi_nn_tensorflowlite.cpp: reject non-fp32 input earlier (#4388)
+- core/iwasm/libraries/wasi-nn/test/build.sh: add a tip for intel mac (#4389)
+- wasi-nn: don't try to deinit uninitialized backend (#4375)
+- wasi-nn: apply the shared library hack to darwin as well (#4374)
+- add nn-cli example (#4373)
+- wasi_nn_openvino.c: remove pre/postprocessing and layout assumptions (#4361)
+- send an empty/error reply from server (#4362)
+- wasi_nn_openvino.c: add a missing buffer overflow check in get_output (#4353)
+- wasi_ephemeral_nn.h: prefix identfiers to avoid too generic names (#4358)
+- wamr-wasi-extensions: add lib-socket things (#4360)
+- wasi_nn_openvino.c: remove broken xml check (#4365)
+- add validation for array type in load_init_expr(GC only) (#4370)
+- wasi-nn: fix backend leak on multiple loads (#4366)
+- Collective fix for typos and minor bugs (#4369)
+- Modify AOT static PGO to conform to llvm-18 and add a CI job to test static PGO on the coremark benchmark (#4345)
+- Update WABT downloads URL (#4357)
+- clean up incompatible running mode checks in test script and ci (#4342)
+- Follow #4268 to deprecate wamr_ide-related components (#4341)
+- Update type validation in load_table_import() and load_table() (#4296)
+- wasi_nn_openvino.c: remove the tensor layout adjustment logic (#4308)
+- add heap-type check for GC when ref.null (#4300)
+- wasi_nn_types.h: remove a seemingly stale comment (#4348)
+- wasi_socket_ext.c: avoid tls to make this library-friendly (#4338)
+- wasi-nn: do not assign wasi_nn_ctx->backend multiple times (#4329)
+- wasi_nn.h: make this compatible with wasi_ephemeral_nn (#4330)
+- remove temporary wasi-libc build steps from CI workflows (#4343)
+- wasi-nn: fix the size of tensor->type (#4333)
+- wasi-nn: move some host-only things out of wasi_nn_types.h (#4334)
+- Collective fix: fix some typos (#4337)
+- Update binary compression steps to follow symlinks for actual files (#4321)
+- Add wamrc compilation into Windows CI workflow (#4327)
+- wasi-nn: remove unused wasi_nn_dump_tensor_dimension prototype (#4325)
+- wasi_nn.h: add import_name attribute (#4328)
+- wasi-nn: protect the backend lookup table with a lock (#4319)
+- handle nullable heap reference types in import section (#4302)
+- wasi_nn_openvino.c: make this buildable (#4305)
+- wasi-nn: fix shared library filenames for macOS (#4306)
+- fix wasi-nn abi definitions (#4307)
+- wasi-nn: remove "backends" argument from detect_and_load_backend() (#4309)
+- wasi_nn_openvino.c: fix a few printf formats (#4310)
+- Bump uvwasi to latest commit #392e1f1 (#4312)
+
+### Enhancements
+
+- Add readme for extended const (#4471)
+- Add security issue runbook (#4450)
+- docs: fix cmake variable typo (#4441)
+- CI: add wamr_wasi_extensions to the release assets (#4425)
+- CI: build wamr-wasi-extensions (#4394)
+- improve installation steps for wasi-sdk and wabt on Windows (#4359)
+- wamr-wasi-extensions: add a cmake package to provide our wasi extension (#4344)
+- Update Dockerfile for Zephyr SDK and Zephyr-project versioning (#4335)
+- add load_by_name in wasi-nn (#4298)
+
+### Others
+
+- build(deps): Bump ossf/scorecard-action from 2.4.1 to 2.4.2 (#4315)
+- build(deps): Bump github/codeql-action from 3.29.1 to 3.29.2 (#4459)
+- build(deps): Bump github/codeql-action from 3.29.0 to 3.29.1 (#4436)
+- build(deps): Bump github/codeql-action from 3.28.19 to 3.29.0 (#4371)
+- build(deps): Bump github/codeql-action from 3.28.18 to 3.28.19 (#4346)
+- build(deps): Bump requests from 2.32.3 to 2.32.4 in /build-scripts (#4349)
+
+---
+
+## WAMR-2.3.1
+
+### Breaking Changes
+
+- Revert the location to install public headers (#4295). This restores compatibility (of installed headers) with WAMR-2.2.0 and earlier.
+
+### New Features
+
+- feat: Add instruction metering for interpreter (#4122)
+
+### Bug Fixes
+
+- updating WASI stdio handle initialization and build options for UVWASI (#4260)
+- Fix SIMD load lane to avoid incompatible pointer types (#4278)
+- Fixed unit tests on X86_32 (#4279)
+- Improve Embedding WAMR guideline (#4284)
+- Fix Compiler Error C2491 (#4286)
+- Enhance type checking for function types in loader and improve error handling (#4294)
+- Dockerfile.vx-delegate build error fix (#4273)
+- Enable runtime API exposure for MSVC builds (#4287)
+
+### Enhancements
+
+- feat(yml): Add ESP32-P4 and ESP32-C5 support (#4270)
+- add a sample to use cmake package (#4291)
+
+### Others
+
+- build(deps): Bump github/codeql-action from 3.28.17 to 3.28.18 (#4285)
+
+---
+
+## WAMR-2.3.0
+
+### Breaking changes
+
+### New features
+
+- simd for fast-interp (#4131)
+- copy call-stack (#4033)
+
+### Bug fixes
+
+- fix(ios): Remove `float-abi` flag (#3889)
+- Fix out of bounds issues after memory.grow on non-aot non-threads builds (#3872)
+- Fix out of bounds issue in is_native_addr_in_shared_heap function (#3886)
+- Fix mmap flags for AOT loader on non-Linux SGX platforms (#3890)
+- fix(uwp): Gate NTSTATUS definition behind WINAPI_PARTITION_DESKTOP for UWP builds (#3897)
+- Fix linked global initialization in multimodule (#3905)
+- Correct the table index calculation in aot_instantiation (#3903)
+- Fix a leak in wasm_loader_emit_br_info (#3900)
+- Check possible integer overflow in aot memory boundary check (#3920)
+- Fix CI wamr-ide error (#3913)
+- Fix WASI Path Mapping Processing (#3923)
+- Use plain assignment rather than bh_memcpy_s (#3924)
+- Fix loader small bug (#3928)
+- don't return an uninitialized trap if argv_to_results fails (#3935)
+- support WASM_FUNCREF return type in argv_to_results (#3936)
+- Fix incorrect assignment in win_file.c (#3939)
+- Fix aot table instantiate (#3946)
+- set alignment 4 when loading multi return value (#3955)
+- Only access Zephyr thread stats info when it's available (#3962)
+- top-level cmakefile: fix macOS build (#3968)
+- Handle a new scenario where an item is both exported and imported. (#3984)
+- platform/nuttx: Flush icache/dcache properly (#4147)
+- fix(runtest.py): A workaround to bypass errors that occur when deleting temporary files (#4093)
+- Fix build issues when compiling WAMRC as a cross-compiler (#4112)
+- include bh_platform.h (#4135)
+- Fix iwasm build error when WAMR_BUILD_WASI_NN enabled (#4138)
+- avoid Windows perform newline translation (#4128)
+- fix: correct typos and improve comments across multiple files by codespell (#4116)
+- fix: fix load aarch64 aot failed (#4114)
+- wasm_loader allocates more spaces for elements (#4099)
+- fix: add dispose of the debug information builder when destroying compilation context (#4105)
+- prevent mmap size overflow on 32 bit platform for memory.grow (#4071)
+- fix: when load aot init expr,no type_idx set. (#4094)
+- fix(aot_emit_aot_file): prevent buffer emission for zero byte_count (#4095)
+- fix(build_llvm_libraries.yml): Correct script path for build_llvm.py (#4089)
+- fix(unit-test): libc_builtin_test issues (#4073)
+- [gc] Subtyping fix (#4075)
+- fix(build_llvm.py): clean up whitespace and formatting in build script (#4087)
+- Unit test:type matching issue and code redundancy (#4079)
+- fix(aot): ensure value_cmp does not exceed br_count in branch table compilation (#4065)
+- In wasm32, fix potential conversion overflow when enlarging 65536 pages (#4064)
+- Use wasm32-wasip1 instead of wasm32-wasi target for rust code (#4057)
+- Update Rust target from 'wasm32-wasi' to 'wasm32-wasip1' in CI (#4050)
+- Fix wasm loader check data segment count (#4039)
+- Fix table index calculations in wasm_loader and wasm_mini_loader (#4004)
+- Ensure **heap_base and **data_end global indices are validated against import count (#3996)
+- fix format specifier warning on 32bit builds (#4177)
+- Remove indirect-load for constants on Xtensa Target to improve performance (#4162)
+- cmake: Enhance target selection for ARM architectures with FPU (#4185)
+- Add import memory/table flag assert check for miniloader (#4179)
+- Fix few integer overflowing (#4161)
+- prevent frame_offset underflow in wasm_loader (#4165)
+- fix: Remove unused variables in SIMD_v128_const case (#4197)
+- fix false native stack overflow detections with HW_BOUND_CHECK (#4196)
+- Keep fix the CMake compatibility issue (#4180)
+- Fix the error of AOT mode on the "i386-windows-msvc" platform (#4183)
+- debug-engine: fix a few type mismatches (#4189)
+- Replace CMAKE_CURRENT_FUNCTION_LIST_DIR (#4200)
+- fix potential memory leak (#4205)
+- Add missing V128 handling in WASM_OP_BR (#4203)
+- fix print_help when libc wasi is enabled (#4218)
+- LLVM: don't verify instcombine fixpoint (#4219)
+- LLVMCreateTargetMachineWithOpts: disable large data (#4220)
+- set default value of `WAMR_BUILD_REF_TYPES` to 1 in standalone cases (#4227)
+- platform/nuttx: Fix dcache operation in os_dcache_flush (#4225)
+- fix return types of our 64-bit clz/ctz/popcount intrinsics (#4238)
+- riscv: avoid llvm.cttz.i32/i64 for xip (#4248)
+- Add overflow check for preserved local offset in preserve_referenced_local (#4211)
+- aot_resolve_object_relocation_group: adapt to LLVM 16 (#4250)
+- initialize WASI stdio handles to invalid for better error handling (#4092)
+- Modifying build flags to ensure libiwasm.so is built (#4255)
+- Stop pretending to support extended-const proposal (#4258)
+- Improve readlinkat_dup() to handle symlink size correctly (#4229)
+- fix: improve error handling of snprintf() in send_thread_stop_status() (#4234)
+- Don't call os_thread_get_stack_boundary unless we actually use it (#4264)
+- avoid access null pointer (#4262)
+- disable compiler to prevent get_current_target() crash (#4251)
+- product-mini/platforms/windows: set C++17 explicitly (#4269)
+- fix buf checking in load_table_section (#4276)
+- Set CMAKE_OSX_SYSROOT when building lldb (#4274)
+- Add select 128 (#4236)
+
+### Enhancements
+
+- Refine looking up aot function with index (#3882)
+- Wasm loader enhancement: check code size in code entry (#3892)
+- Refactor AOT loader to support compatible versions (#3891)
+- GlobalValueSet was moved to IRPartitionLayer recently, but we have a local definition anyway (#3899)
+- Support external toolchain on Windows for aot compiler (#3911)
+- Drop declarative elements on module instantiation (#3922)
+- add testcases for shared heap and fix POP_MEM_OFFSET of memory64 (#3916)
+- Enable ref types by default (#3894)
+- Update README.md to clarify Windows toolchain support and ESP-IDF reference (#3917)
+- add thread cpu time for zephyr (#3937)
+- Improvements for platform thread APIs on Windows and Zephyr (#3941)
+- Refactor SConscript and add file checks in iwasm.c (#3945)
+- Consume the placeholders that were put when emitting table info (#3940)
+- wasm_export.h: Use "default" visibility for gcc and clang (#3957)
+- [fuzzing] Enable instantiation (#3958)
+- use a random secret key (#3971)
+- CMakeLists.txt: Do not require C++ (#3956)
+- add reference type support by default for darwin to support WASI-SDK-25 (#3978)
+- top-level cmake: link llvm libraries to our shared library (#3973)
+- Set thread information earlier in exec_env creation (#3967)
+- Break aot_create_comp_data into small functions (#3987)
+- Optimize memory initialization handling in AOT loader (#3983)
+- nuttx: remove the up_x API for kernel build (#4154)
+- Expose WAMR_BUILD_GC_HEAP_SIZE_DEFAULT as a CMake option (#4124)
+- Use log instead of using assertion in aot loader (#4119)
+- feat: use C linkage in aot_comp_option.h for C++ embeding (#4106)
+- Cmake improvements (#4076)
+- feat: add support for EXTERNREF value type and enable AOT validator in fuzz tests (#4083)
+- build_llvm.py: Allow to build xtensa target on non-xtensa host (#4086)
+- Add a conditional check for the macro **STDC_VERSION** (#4080)
+- [fuzzing] execute every exported function (#3959)
+- Update memory allocation functions to use allocator user data (#4043)
+- Add versioning support and update CMake configuration (#3933)
+- Show wasm proposals status during compilation and execution (#3989)
+- add a validator for aot module (#3995)
+- Synchronize the GC spec tests to the commit from December 9. 2024. (#4022)
+- Refine getting const offsets in wasm loader of fast-interp (#4012)
+- fixes for compiling on windows (#4026)
+- .github: Add shared lib builds (#3975)
+- Error message improvement (#4000)
+- Refine read leb int wasm loader of fast interpreter (#4017)
+- Enable shrunk memory by default and add related configurations (#4008)
+- Add documentation regarding security issues and the status of Wasm proposals (#3972)
+- Improve stack consistency by ensuring sufficient space for dummy offsets (#4011)
+- Check whether related table has funcref elem in opcode call_indirect (#3999)
+- [fuzzing] Use software bound-check during fuzzing (#4003)
+- Add an example of how to embed WAMR in Zephyr user mode (#3998)
+- Update cmake min to 3.14 (#4175)
+- aot: add new u64 intrinsics (#4168)
+- Refactor Dockerfile and update .dockerignore for wasi-nn tests; adjust map-dir parameters in smoke test script (#4158)
+- improve variable naming and code clarity in SIMD operations (#4157)
+- Raise CI runner to ubuntu 22.04 (#4191)
+- Remove the dlen to optimize it. (#4193)
+- Add missing casts and improve error handling in performance map functions (#4202)
+- Raise wasi-sdk to 25 and wabt to 1.0.37 (#4187)
+- wamrc: add --disable-llvm-jump-tables option (#4224)
+- feat(fuzz): add a new fuzzing target about aot compiler (#4121)
+- bypass vptr santizier (#4231)
+- use a selected llvm libs list to replace the full list (#4232)
+- teach aot emitter/loader about .srodata and .srodata.cst\* sections (#4240)
+- run_clang_format_diff: mention homebrew for clang-format installation (#4237)
+- Use --target to pass a triple in wamrc (#4199)
+- samples/wasm-c-api: skip aot compilation unless necessary (#4239)
+- samples/wasm-c-api: remove unused valgrind detection (#4249)
+- More detail to python setup, and fixed small typo (#4247)
+- JIT: don't join worker threads twice (#4252)
+- aot_resolve_object_relocation_group: adapt to LLVM 19 (#4254)
+- build-scripts/build_llvm.py: bump to llvm 18 (#4259)
+- CI: make macos' build_samples_wasm_c_api similar to ubuntu (#4253)
+- Refactor fast-interpreter SIMD compilation flags (#4261)
+- Bypass wamr_ide-related components from the release process. (#4268)
+- Check for WASM_ENABLE_SIMDE in a couple more places (#4266)
+- Add error handling for sgx ci (#4222)
+
+### Security Issues
+
+- Add validation for old_path in wasi_path_symlink (# CVE-2025-43853)
+
+### Others
+
+- Exclude fuzz test python and npm packages in scoreboard scan (#3871)
+- Bump AOT_CURRENT_VERSION for WAMR 2.x (gc, memory64) (#3880)
+- Add Tianlong into code owners (#3970)
+- build(deps): Bump actions/upload-artifact from 4.4.3 to 4.5.0 (#3981)
+- docs: Update build instructions suggestions for using Valgrind (#4164)
+- test: temporarily skip 'skip-stack-guard-page' test case (#4163)
+- build(deps): Bump actions/upload-artifact from 4.6.1 to 4.6.2 (#4159)
+- Update NuttX and NuttX Apps references to releases/12.9 in workflow files (#4148)
+- build(deps): Bump esbuild, @vitejs/plugin-react and vite (#4149)
+- build(deps): Bump ossf/scorecard-action from 2.4.0 to 2.4.1 (#4109)
+- build(deps): bump github/codeql-action from 3.26.13 to 3.28.1 (#3888) (#3902)
+- build(deps): Bump github/codeql-action from 3.28.10 to 3.28.11 (#4132)
+- build(deps): Bump github/codeql-action from 3.28.9 to 3.28.10 (#4108)
+- build(deps): Bump actions/upload-artifact from 4.6.0 to 4.6.1 (#4107)
+
+---
+
+## WAMR-2.2.0
+
+### Breaking changes
+
+### New features
+
+- Add support for multi-memory proposal in classic interpreter (#3742)
+- wasi-nn: Add a new target for llama.cpp as a wasi-nn backend (#3709)
+- Add memory instance support apis (#3786)
+- Implement a first version of shared heap feature (#3789)
+- Support dynamic aot debug (#3788)
+- Implement shared heap for AOT (#3815)
+- Support table64 extension in classic-interp and AOT running modes (#3811)
+
+### Bug fixes
+
+- Enable merged os_mmap for aot data sections (#3681)
+- Fix arm64 issues on mac (#3688)
+- aot loader: Call os_mmap with MMAP_MAP_32BIT only when target is x86-64 or riscv64 (#3755)
+- Fix building iwasm_shared and iwasm_static libs on win32 (#3762)
+- Fix compile error when multi-module and tags are enabled (#3781)
+- Fix aot multi export memory support (#3791)
+- Fix Windows compile error when uvwasi is enabled (#3810)
+- Fix missing symbols when using aot mode on riscv platforms (#3812)
+- Fix mac build of libc_emcc_wrapper.c (#3836)
+- aot_comp_option.h: Add missing stdint.h header (#3834)
+- Fix compilation error found in tflite test (#3820)
+- Fix exec_env_tls assertion in module instantiation (#3844)
+- Fix issues of destroy_shared_heaps (#3847)
+
+### Enhancements
+
+- aot loader: Refine os_mmap related code (#3711)
+- Enable merged os_mmap for aot data sections and aot text (#3743)
+- Improve posix mmap retry logic (#3714)
+- Remove unnecessary code duplication in aot runtime (#3767)
+- Add wamrc parameter to configure stack frame features (#3763)
+- refactoring: Re-use commit IP functionality between exception handling and other cases (#3768)
+- AOT call stack optimizations (#3773)
+- Appease GCC strict prototypes warning (#3775)
+- Appease GCC -Wformat (#3783)
+- Fix compiler warnings (#3784)
+- Implement option for skipping function index in the callstack (#3785)
+- Fix a compile warning in aot_emit_function.c (#3793)
+- Restore cmake hidden compile symbol visibility (#3796)
+- Refactor shared heap feature for interpreter mode (#3794)
+- Add no_resolve to LoadArgs and wasm_runtime_resolve_symbols (#3790)
+- shared heap: Fix some issues and add basic unit test case (#3801)
+- Add shared heap sample (#3806)
+- Fix unused param warning when GC is enabled (#3814)
+- Add scoreboard CI for supply-chain security (#3819)
+- Emit load_addr and load_size if WAMR_ENABLE_COMPILER is set (#3835)
+- libc-emcc: Use alternate method to check getrandom support (#3848)
+- Enable libc-wasi for windows msvc build (#3852)
+- Remove unused folder samples/gui and samples/littlevgl (#3853)
+- Fix some compile warnings and typos (#3854)
+- Allow to set native stack boundary to exec_env (#3862)
+- Refine wasm/aot function instance lookup (#3865)
+- Fix quadratic runtime for duplicate export name detection (#3861)
+
+### Others
+
+- Add a comment on AOT_SECTION_TYPE_SIGNATURE (#3746)
+- CI: Freeze version of bloaty for NuttX compilation (#3756)
+- aot compiler: Allow to control stack boundary check when boundary check is enabled (#3754)
+- Update ref to the multi-memory tests (#3764)
+- compilation_on_nuttx.yml: Update checkout action to suppress warnings (#3765)
+- CI: Disable parallel test in spectest for NuttX (#3780)
+- spec_test_on_nuttx.yml: Disable riscv32_ilp32f for now (#3777)
+- Ignore temporary file from aider (#3787)
+- Add CODEOWNERS (#3822)
+- build(deps): bump github/codeql-action from 2.2.4 to 3.26.9 (#3826)
+- build(deps): bump actions/upload-artifact from 3.1.0 to 4.4.0 (#3827)
+- build(deps): bump ossf/scorecard-action from 2.3.1 to 2.4.0 (#3828)
+- build(deps): bump github/codeql-action from 3.26.9 to 3.26.11 (#3843)
+- build(deps): bump actions/upload-artifact from 4.4.0 to 4.4.3 (#3855)
+- build(deps): bump github/codeql-action from 3.26.11 to 3.26.12 (#3856)
+- Add Windows wamrc and iwasm build in release CI (#3857)
+- Fix syntax error in codeql_buildscript.sh (#3864)
+- release CI: Add another iwasm binary that supports Garbage Collection and Exception Handling (#3866)
+- Fix lookup function issue reported in nightly run (#3868)
+
+---
+
+## WAMR-2.1.2
+
+### Breaking Changes
+
+- wasi-nn: Apply new architecture (#3692)
+
+### New Features
+
+- [wasi-nn] Add a new wasi-nn backend openvino (#3603)
+- Add APIs into wasm_c_api.h to summary wasm function execution duration (#3639)
+- Add support for RISCV32 ILP32F (#3708)
+
+### Bug Fixes
+
+- libc-builtin: Fix function prototype for wasm_runtime_module_realloc (#3702)
+- Fix potential memory leak in insert_native_symbol (#3712)
+- aot compiler: Fix NaN handling for opcode f32/f64.const in XIP mode (#3721)
+- Fix table idx resolving in op call_indirect/return_call_indirect (#3726)
+
+### Enhancements
+
+- Remove a few hardcoded spec test knowledge from the core library (#3648)
+- Change log of import function to be consistent (#3656)
+- libc-builtin: Fix a printf format (#3652)
+- Set compile symbol visibility to hidden in cmake (#3655)
+- wamrc: Add --mllvm= option (#3658)
+- wamr-compiler: Avoid size-level tweak if target is specified (#3659)
+- aot runtime: Add missing arm/thumb relocations (#3660)
+- aot compiler: Enlarge AOTNativeSymbol->symbol (#3662)
+- aot compiler: Bail out on too long native symbol names (#3663)
+- Support more features for rt-thread (#3661)
+- Zephyr User Mode Support (#3650)
+- Set posix thread name for debug build (#3657)
+- Add emscripten_sleep() wrapper to libc-emcc (#3669)
+- Fix a compilation warning (#3682)
+- wamrc: Add some help text for --size-level (#3689)
+- Restore linux iwasm default visibility (#3691)
+- posix_thread.c: Restore old signal alternate stack before thread exit (#3693)
+- libc-wasi: Make rights of STDIN/STDOUT/STDERR fixed and overlook their access modes (#3694)
+- [refactoring] Extract read leb to a separate file, share the code between loader and mini loader (#3701)
+- debug-interp: Only add lock when signal_flag is SIG_SINGSTEP (#3704)
+- Fix compilation warnings (#3707)
+- Add missing headers in bh_atomic.h and aot_llvm_extra.cpp (#3715)
+- Update std atomic check and simd compatibility check for arc compiler (#3716)
+- aot compiler: Track non-0x00 tableindex as ref types use (#3695)
+- compilation: Use the dedicated stack-sizes section only for AOT (#3732)
+- riscv: Add missing relocation intrinsics for **fixdfsi/**ltdf2 (#3733)
+
+### Others
+
+- Fix night run CI (#3640)
+- spec-test-script/runtest.py: Don't assume the tmp dir path (#3632)
+- wamr-test-suites: Remove dead code (wasi_test) (#3634)
+- wamr-test-suites/test_wamr.sh: Add an option to specify wamrc binary (#3635)
+- CI: Build llvm for xtensa (#3637)
+- spec-test-script/runtest.py: Avoid specifying -v=0 unnecessarily (#3642)
+- spec-test-script: Add xtensa case (#3643)
+- spec-test-script/runtest.py: Move "--size-level=1" to common place for RISCV64 (#3644)
+- spec-test-script/runtest.py: Use a shorter timeout when expected to fail (#3647)
+- spec-test-script: Make case_last_words larger (#3651)
+- spec-test-script/runtest.py: Reduce stack size for aot w/o gc (#3653)
+- spec-test-script: Skip a few tests for xtensa qemu (#3664)
+- spec-test-script: Use -mtext-section-literals for xtensa xip (#3666)
+- spec_test_on_nuttx.yml: Add xtensa (#3665)
+- spec_test_on_nuttx.yml: Enable xip (#3671)
+- spec_test_on_nuttx.yml: Record more logs (#3670)
+- spec_test_on_nuttx.yml: Replace sed with kconfig-tweak (#3672)
+- spec_test_on_nuttx.yml: Retire CONFIG_EOL_IS_LF (#3676)
+- spec-test-script/runtest.py: Use wamrc --xip option for xip (#3683)
+- CI: Bump NuttX version to 12.6 (#3684)
+- wamr-test-suites: Clean up generated tmp files after spec test (#3700)
+- test_wamr.sh: Fix build wabt tool (#3703)
+- NuttX: Retire CONFIG_ARCH_RV32IM and CONFIG_ARCH_RV64GC (#3717)
+- runtest.py: Normallize option handling for XIP mode (#3722)
+- CI: Enable XIP spectest for RISCV32 ILP32F (#3727)
+- CI: Unify configuration stage for NuttX (#3725)
+
+---
+
+## WAMR-2.1.1
+
+### Breaking Changes
+
+- Sync up with latest wasi-nn spec (#3530)
+
+### New Features
+
+- Add APIs to get package version (#3601)
+- Export API wasm_runtime_enlarge_memory (#3569)
+- Add table type API support (#3515)
+- Add wasm_runtime_get_module_package_type() and wasm_runtime_get_file_package_type() (#3600)
+
+### Bug Fixes
+
+- wasm_application.c: Avoid null pointer dereference (#3620)
+- EH: Use the consistent type for EH handlers (#3619)
+- wasm loader: Fix several issues in GC and exception handling (#3586)
+- wasm loader: Fix push_frame_offset when pushing v128 type (#3588)
+- Add integer overflow check for some indices in wasm/aot loader (#3579)
+- aot-analyzer: Fix a few printf formats (#3590)
+- aot-analyzer: Fix macos build (#3589)
+- Fix compilation errors in aot-analyzer tool (#3584)
+- interp debugger: Fix setting invalid value to step_count (#3583)
+- aot loader: Check import global value type before using (#3571)
+- Fix missing stack frame alloc/free in AOT multi-module invoke (#3562)
+- aot loader: Verify global value type (#3560)
+- aot loader: Add more checks in load_native_symbol_section() (#3559)
+- core/shared/platform: Zero memory returned by os_mmap in some platforms (#3551)
+- dwarf_extractor.cpp: Fix buffer overruns (#3541)
+- aot loader: Prevent loading multiple native symbol sections (#3538)
+- Validate func type in aot loader (#3535)
+- wamrc: Fix truncated DW_AT_producer (#3537)
+- wasm loader: Fix pop invalid offset count when stack top is ANY (#3516)
+- Fix two fuzz issues (#3529)
+- Fix several issues reported by oss-fuzz (#3526)
+
+### Enhancements
+
+- Fix compile warnings/error reported in Windows (#3616)
+- wasm loader: Reject v128 for interpreters (#3611)
+- Fix typos in wamrc and wasm_export.h (#3609)
+- Bump ocaml/setup-ocaml from 2 to 3 (#3604)
+- CMakeLists.txt: Fix Android pthread linkage (#3591)
+- Add more arm AOT reloc entries (#3587)
+- wasi-nn: Use numpy v1 in wasi-nn test requirements.txt (#3582)
+- Optimize for multi-module support in AOT mode (#3563)
+- aot compiler: Propagate const-ness by ourselves (#3567)
+- aot_resolve_target_info: Avoid in-place modification of e_type (#3564)
+- Allow missing imports in wasm loader and report error in wasm instantiation instead (#3539)
+- aot compiler: Use larger alignment for load/store when possible (#3552)
+- Consistent const keyword position in wasm_export.h (#3558)
+- wasm_memory.c: Fix typo: hasn't been initialize -> `hasn't been initialized` (#3547)
+- dwarf_extractor.cpp: Try to preserve link name (#3542)
+- dwarf_extractor.cpp: Enable limited support for C++ (#3540)
+- Sync up with latest wasi-nn spec (#3530)
+- Expose more functions related to emitting AOT files (#3520)
+- Make wasi-nn backends as separated shared libraries (#3509)
+- build_llvm.py: Speed up llvm build with multi procs on windows (#3512)
+- Fix compilation warnings of wasi-nn (#3497)
+- Add missing functions to make RIOT work with the 2.x.x version (#3508)
+
+### Others
+
+- Update devcontainer.md (#3628)
+- Fix compile errors on workload bwa and benchmark jetstream (#3617)
+- wasm-mutator-fuzz: Set compilers earlier (#3585)
+- wasm-mutator-fuzz: Make compilers overridable (#3578)
+- wasi-nn: Add wasmedge-wasinn-example as smoke test (#3554)
+- Add standalone cases (#3536)
+- wasm-mutator-fuzz: Fix build errors and warnings for macOS (#3519)
+- wasm-mutator-fuzz: Use another variable to check if in oss-fuzz environment (#3518)
+- Add wasi-nn example as smoke test case (#3501)
+
+---
+
+## WAMR-2.1.0
+
+### Breaking Changes
+
+### New Features
+
+- Add wasm_export.h APIs to expose memory type (#3496)
+- Add api to get export global instance (#3452)
+- Add wasm-mutator-fuzz test (#3420)
+- Implement Memory64 support for AOT (#3362)
+- Add wasm module global type information APIs (#3406)
+- Add aot binary analysis tool aot-analyzer (#3379)
+- Expose API to get import/export function's param/result valkind (#3363)
+- Add WASI support for esp-idf platform (#3348)
+
+### Bug Fixes
+
+- Fix posix build when libc wasi is disabled and debug interp is enabled (#3503)
+- Fix wasm_mini_loader.c build when jit or multi-module is enabled (#3502)
+- Fix wasm loader check data segment count (#3492)
+- Fix loader parse block type and calculate dynamic offset for loop args (#3482)
+- Fix memory64 handling find_block_addr and execute_main (#3480)
+- Fix two issues to make fuzzing test quit earlier (#3471)
+- Fix test-wamr-ide CI failure (#3485)
+- NuttX: Fix a dbus-related crash on esp32s3 (#3470)
+- Clone data segments when specified with load args (#3463)
+- Fix codeql compilation error (#3461)
+- Fix several typos and fix bh_log calculate mills (#3441)
+- ssp_config.h: Fix ifdef for android random api (#3444)
+- libc-wasi: Fix a locking botch (#3437)
+- Fix fast interp RECOVER_BR_INFO and local set/tee (#3434)
+- aot compiler: Fix a type mismatch in compile_op_float_min_max (#3423)
+- Correct Exception Handling tag type when GC is enabled (#3413)
+- wasm loader: Fix handling if block without op else (#3404)
+- ref-types: Correct default value for function local variables (#3397)
+- aot compiler: Fix the length type passed to aot_memmove/aot_memset (#3378)
+- Fix loader and mini-loader select potential error (#3374)
+- Fix aot debugger compilation error on windows (#3370)
+- A few native stack detection fixes for macOS/arm64 (#3368)
+- Fix ESP32-S3 compiling error (#3359)
+- Fix a few native stack address calculations (#3351)
+
+### Enhancements
+
+- Modify logging for windows exception handler and remove unused function (#3489)
+- posix iwasm: Make the timeout logic a bit more robust (#3478)
+- libc-builtin: Enhance buffered print for printf_wrapper (#3460)
+- Enhance GC const initializer expression to support nested struct/array new (#3447)
+- wasi: Tweak the configuration for nuttx and explain why (#3451)
+- NuttX: Replace esp32s3 bits with the OS-provided APIs (#3439)
+- Allow not copying the wasm binary in wasm-c-api and not referring to the binary in wasm/aot loader (#3389)
+- aot: Make precheck functions use short-call for xtensa (#3418)
+- Add wasm_runtime_detect_native_stack_overflow_size (#3355)
+- Enhance wasm loader checks for opcode br_table (#3352)
+
+### Others
+
+- Bump requests from 2.32.2 to 2.32.3 in /build-scripts (#3494)
+- Enable building static library on Android platform (#3488)
+- wasm-mutator-fuzz: Generate more kinds of corpus (#3487)
+- Correct nuttx repo names (#3484)
+- Bump requests from 2.31.0 to 2.32.2 in /build-scripts (#3474)
+- wasm-mutator-fuzz: Adapt to oss-fuzz compilation (#3464)
+- Add regression tests of BA issue cases (#3462)
+- Add malformed test cases (#3459)
+- NuttX: Rename a few recently-added nuttx options (#3449)
+- wamr-test-suites: Enable AOT multi-module spec tests (#3450)
+- Remove install_wasi_sdk from workload preparation script (#3445)
+- Add cmake static/shared library build settings (#3443)
+- Update spec test to latest commit (#3293)
+- Fix typo of WAMR_CONFIGUABLE_BOUNDS_CHECKS (#3424)
+- ci/coding_guidelines_check.py: Allow some well-known file names to contain '-' (#3428)
+- product-mini/platforms/posix/main.c: Adapt to WASM_MEM_DUAL_BUS_MIRROR (#3427)
+- Add comments to global type function declarations (#3431)
+- nuttx/esp32s3: Apply ibus/dbus adjustment to internal ram 1 as well (#3421)
+- Change WASM_ANYREF to WASM_EXTERNREF (#3426)
+- Remove unused macros which were moved to wamr-app-framework (#3425)
+- Add WASM_V128 in wasm_valkind_enum (#3412)
+- Fix basic example, parameter missmatch between host and wasm (#3415)
+- Fix workspaces path in build_wamr.sh (#3414)
+- core/iwasm/compilation: Remove stale function prototypes (#3408)
+- Add test cases for the requirements of "gc-aot" feature (#3399)
+- append_aot_to_wasm.py: Add --ver-str option to emit more info in custom section name (#3398)
+- Fix clang compile warnings (#3396)
+- Fix some more spelling issues (#3393)
+- Fix some spelling issues (#3385)
+- samples/native-stack-overflow: Examine native functions with signature (#3382)
+- Add some more comments on WASM_STACK_GUARD_SIZE (#3380)
+- Fix typo for 'native' in wasm_export.h (#3376)
+- CI: Use macos-13 instead of macos-latest (#3366)
+- Test more samples in nightly-run CI (#3358)
+- Random improvements to samples/native-stack-overflow (#3353)
+- Reduce WASM_STACK_GUARD_SIZE a bit for posix-like platforms (#3350)
+- doc: Add ADOPTERS.md (#3324)
+- Update binary size info in README.md (#3030)
+- core/config.h: Bump the default WASM_STACK_GUARD_SIZE (#3344)
+- Add unit test suites (#3490)
+- Fix internal global getter types (#3495)
+- Fix CI build and run unit tests (#3499)
+
+---
+
+## WAMR-2.0.0
+
+### Breaking Changes
+
+- The AOT ABI was changed after GC and memory64 features were introduced:
+  - Implement GC feature for interpreter, AOT and LLVM-JIT (#3125)
+  - Implement memory64 for classic interpreter (#3266)
+  - Always allocate linear memory using mmap (#3052)
+  - Refactor APIs and data structures as preliminary work for Memory64 (#3209)
+- Remove unused argument in wasm_runtime_lookup_function (#3218)
+- Separate app-manager and app-framework from WAMR (#3129)
+
+### New Features
+
+- Implement GC feature for interpreter, AOT and LLVM-JIT (#3125)
+- Implement memory64 for classic interpreter (#3266)
+- Add wasi_ephemeral_nn module support (#3241)
+
+### Bug Fixes
+
+- EH: Fix broken stack usage calculation (#3121)
+- Fix loader check_wasi_abi_compatibility (#3126)
+- Fix possible integer overflow in loader target block check (#3133)
+- Fix locel.set in polymorphic stack (#3135)
+- Fix threads opcodes' boundary check in classic-interp and fast-interp (#3136)
+- fast-interp: Fix copy_stack_top_i64 overlap issue (#3146)
+- Fix a ubsan complaint "applying zero offset to null pointer" (#3160)
+- fast-interp: Fix GC opcode ref.as_non_null (#3156)
+- Fix llvm jit push funcref/externref result type issue (#3169)
+- Fix wasm loader handling opcode br_table (#3176)
+- Fix ref.func opcode check when GC is enabled (#3181)
+- lldb_function_to_function_dbi: Fix a null dereference (#3189)
+- Fix compilation errors on MinGW (#3217)
+- Fix compilation errors on esp-idf platform (#3224)
+- Fix aot relocation symbols not found on windows 32-bit (#3231)
+- posix_file.c: Correct the dirfd argument that passes to fstatat (#3244)
+- Fix compilation errors on zephyr platform (#3255)
+- Fix dynamic offset not updated in op_br for block with ret type (#3269)
+- aot debug: Fix a NULL dereference (#3274)
+- thread mgr: Free aux stack only when it was allocated (#3282)
+- interp: Restore context from prev_frame after tail calling a native function (#3283)
+- Sync simd opcode definitions spec (#3290)
+- Fix posix_fadvise error handling (#3323)
+- Fix windows relocation string parsing issue (#3333)
+
+### Enhancements
+
+- Zero the memory mapped from os_mmap in NuttX (#3132)
+- Use logger for runtime error/debug prints (#3097)
+- aot_compile_op_call: Stop setting calling convention explicitly (#3140)
+- aot compiler: Place precheck wrapper before the corresponding wrapped function (#3141)
+- Fix null pointer access in fast-interp when configurable soft bound check is enabled (#3150)
+- Clarify how to verify SGX evidence without an Intel SGX-enabled platform (#3158)
+- zephyr: Use zephyr sys_cache instead of CMSIS (#3162)
+- VSCode IDE enhancement and readme update (#3172)
+- Add vprintf override for android and esp-idf (#3174)
+- zephyr: Include math only with minimal libc (#3177)
+- zephyr: Implement Alloc_With_System_Allocator (#3179)
+- Use indirect call in pre-checker function to avoid relocation in XIP mode (#3142)
+- Implement the remaining Windows filesystem functions (#3166)
+- Fix LLVM assertion failure and update CONTRIBUTING.md (#3197)
+- Allow overriding max memory on module instantiation (#3198)
+- Get location info from function indexes in addr2line script (#3206)
+- Demangle function names in stack trace when using addr2line script (#3211)
+- Refactor APIs and data structures as preliminary work for Memory64 (#3209)
+- Allow converting the zero wasm address to native (#3215)
+- Small refactor on WASMModuleInstance and fix Go/Python language bindings (#3227)
+- Add esp32c6 support (#3234)
+- Make android platform's cmake flags configurable (#3239)
+- Go binding: Change C.long to C.int64_t when call wasm_runtime_set_wasi_args_ex (#3235)
+- Implement apis to set and get the name of a wasm module (#3254)
+- Append '\0' to every name string in aot name section (#3249)
+- Add cmake flag to control aot intrinsics (#3261)
+- Add lock and ref_count for runtime init (#3263)
+- nuttx: Migrate NuttX CMake build for WAMR (#3256)
+- LLVM 19: Switch to debug records (#3272)
+- aot debug: Process lldb_function_to_function_dbi only for C (#3278)
+- Fix warnings/issues reported in Windows and by CodeQL/Coverity (#3275)
+- Enhance wasm loading with LoadArgs and support module names (#3265)
+- Add wamr to esp-idf components registry (#3287)
+- zephyr: Add missing pthread library functions (#3291)
+- Add more checks in wasm loader (#3300)
+- Log warning if growing table failed (#3310)
+- Enhance GC subtyping checks (#3317)
+- User defined memory allocator for different purposes (#3316)
+- Add a comment on WASM_STACK_GUARD_SIZE (#3332)
+- Allow executing malloc/free from native in memory64 mode (#3315)
+- Add functions to expose module import/export info (#3330)
+
+### Others
+
+- Add ARM MacOS to the CI (#3120)
+- Download jetstream src from github instead of browserbench.org (#3196)
+- Update document to add wamr-rust-sdk introduction (#3204)
+- Fix nightly run tsan ASLR issue (#3233)
+- Add CodeQL Workflow for Code Security Analysis (#2812)
+- Add issue templates (#3248)
+- Fix CI error when install packages for macos-14 (#3270)
+- Update document for GC, exception handling and memory64 features (#3284)
+- Update release CI (#3295)
+- Add native-stack-overflow sample (#3321)
+
+---
+
 ## WAMR-1.3.2
 
 ### Breaking Changes
 
 ### New Features
+
 - Implement Exception Handling for classic interpreter (#3096)
   - Use `cmake -DWAMR_BUILD_EXCE_HANDLING=1/0` option to enable/disable
     the feature, and by default it is disabled
   - It is still in highly experimental stage
 
 ### Bug Fixes
+
 - Fix build errors when initializing wasm_val_t values with macros (#3007)
 - fix(wasm-c-api): Do not clone stack frames if there's no trap (#3008)
 - classic-interp: Handle SIMD opcode when JIT is enabled (#3046)
@@ -27,6 +884,7 @@
 - Fix read and validation of misc/simd/atomic sub opcodes (#3115)
 
 ### Enhancements
+
 - Clear compilation warning and dead code (#3002)
 - aot debug: Try to use a bit more appropriate file names (#3000)
 - Increase default app thread stack size (#3010)
@@ -35,7 +893,7 @@
 - Allow using mmap for shared memory if hw bound check is disabled (#3029)
 - Don't redefine D_INO if already defined (#3036)
 - Enhancements on wasm function execution time statistic (#2985)
-- wamr-compiler: Fix non-x86{_64} host builds (#3037)
+- wamr-compiler: Fix non-x86{\_64} host builds (#3037)
 - Disable quick aot entry for interp and fast-jit (#3039)
 - nuttx: Add option to enable quick aot entry (#3040)
 - Set CONFIG_HAS_CAP_ENTER to support posix file api for freertos (#3041)
@@ -57,6 +915,7 @@
 - Fix windows build error and compilation warnings (#3095)
 
 ### Others
+
 - Fix nightly-run CI failure (#3014)
 - Build samples in debug mode (#3019)
 - Remove deprecated tests in language-bindings python (#3018)
@@ -77,6 +936,7 @@
 ## WAMR-1.3.1
 
 ### Breaking Changes
+
 - In multi-threading, when an exception was thrown in wasm_func_call(),
   the trap returned contains the stack frames of the thread where the
   exception occurs, but not the stack frames of the main thread.
@@ -85,9 +945,11 @@
   `wamrc --emit-custom-sections=name` to emit it and make it clear.
 
 ### New Features
+
 - Enable AOT linux perf support (#2930)
 
 ### Bug Fixes
+
 - Corrects Zephyr include files for current versions of Zephyr (#2881)
 - Fix possible dead lock in wasm_cluster_spawn_exec_env (#2882)
 - Handle ambiguous fstflags on fd_filestat_set_times (#2892)
@@ -106,7 +968,8 @@
 - Fix linux-sgx build error when libc-wasi is disabled (#2997)
 
 ### Enhancements
-- fix command-reactor: Look for _initialize only if _start not found (#2891)
+
+- fix command-reactor: Look for \_initialize only if \_start not found (#2891)
 - Refactor reloc symbols for riscv (#2894)
 - Avoid memory import failure when wasi-threads is enabled (#2893)
 - interpreter: Simplify memory.grow a bit (#2899)
@@ -118,7 +981,7 @@
 - Enable wasm_runtime_terminate for single-threading (#2924)
 - nuttx: Add CONFIG_INTERPRETERS_WAMR_DEBUG_AOT (#2929)
 - Allow to control built-in libraries for wamrc from command line options (#2928)
-- Fix a bug that appends '_precheck' to aot_func (#2936)
+- Fix a bug that appends '\_precheck' to aot_func (#2936)
 - freertos: Add os_cond_broadcast for pthread wrapper (#2937)
 - Append .aot to .wasm as a custom section named "aot" (#2933)
 - fix(sgx-ra): Fix building when enclave is built without librats ahead (#2968)
@@ -133,6 +996,7 @@
 - Refine AOT/JIT code call wasm-c-api import process (#2982)
 
 ### Others
+
 - compilation_on_nuttx.yml: Use docker image to simplify env setup (#2878)
 - samples/spawn-thread: Disable libc and pthread (#2883)
 - Add arm64 to nuttx compilation test (#2886)
@@ -147,6 +1011,7 @@
 ## WAMR-1.3.0
 
 ### Breaking Changes
+
 - Abstract POSIX filesystem functions (#2585)
   - Change API wasm_runtime_set_wasi_args_ex's arguments
     `int stdinfd/stdoutfd/stderrfd` to `int64_t stdinfd/stdoutfd/stderrfd`
@@ -161,6 +1026,7 @@
 - libc-wasi: Conditionally support SYNC flags (#2581)
 
 ### New Features
+
 - Support muti-module for AOT mode (#2482)
 - Implement libc-wasi for Windows platform (#2740)
 - Implement module instance context APIs (#2436)
@@ -169,8 +1035,9 @@
 - Add Cosmopolitan Libc Platform (#2598)
 
 ### Bug Fixes
+
 - sgx-ra: Disable the building of samples (#2507)
-- Handle a return from wasi _start function correctly (#2529)
+- Handle a return from wasi \_start function correctly (#2529)
 - fd_object_release: Preserve errno (#2535)
 - Fix build error with ancient GCC (4.8) (#2553)
 - Fix compiling error for RT-Thread (#2569)
@@ -221,6 +1088,7 @@
 - Fix sample basic intToStr was called with wrong length (#2876)
 
 ### Enhancements
+
 - Implement strict validation of thread IDs according to the specification (#2521)
 - Stop abusing shared memory lock to protect exception (#2509)
 - Implement os_usleep for posix (#2517)
@@ -236,7 +1104,7 @@
 - Add user to enlarge memory error callback (#2546)
 - runtest.py: Show accurate case amount in summary (#2549)
 - Allow using custom signal handler from non-main thread (#2551)
-- Return __WASI_EINVAL from fd_prestat_dir_name (#2580)
+- Return \_\_WASI_EINVAL from fd_prestat_dir_name (#2580)
 - Support AOT compiler with LLVM 17 (#2567)
 - Add support for closing/renumbering preopen fds (#2578)
 - Enable AOT usage on M1 mac (#2618)
@@ -279,6 +1147,7 @@
 - Fix compilation warnings on Windows (#2868)
 
 ### Others
+
 - Add mutex stress test (#2472)
 - Add unit tests for the tid allocator (#2519)
 - Add support for running tests on apple M1 macs (#2554)
@@ -316,15 +1185,18 @@
 ## WAMR-1.2.3
 
 ### Breaking Changes
+
 - Increase default native stack size (#2332)
 
 ### New Features
+
 - Implement the segue optimization for LLVM AOT/JIT (#2230)
 - Implement AOT static PGO (#2243)
 - Enable static PGO for Linux SGX (#2270)
 - Add Rust Formatters to Debugger (Vector, Map etc.) (#2219)
 
 ### Bug Fixes
+
 - The Python language-binding needs python>=3.9 (#2228)
 - aot_compile_op_call: Remove a wrong optimization (#2233)
 - Fix typo in samples/ref-types (#2236)
@@ -367,6 +1239,7 @@
 - Fix typo in aot_emit_aot_file.c (#2478)
 
 ### Enhancements
+
 - A few changes related to WAMRC_LLC_COMPILER (#2218)
 - Enhance linux-sgx CI (#2102)
 - Add asan and ubsan to WAMR CI (#2161)
@@ -375,7 +1248,7 @@
 - Add cmake variable to disable writing gs register (#2284)
 - Make hmu_tree_node 4 byte aligned to reduce compiler warning (#2268)
 - Appease unused warning on min_uint64 (#2277)
-- Fix format warning by PRIu32 in [wasm|aot] dump call stack  (#2251)
+- Fix format warning by PRIu32 in [wasm|aot] dump call stack (#2251)
 - Fix a compile warning due to missing include (#2293)
 - Fix dockerfile linter warnings (#2291)
 - Enable windows x86-32 AOT relocations (#2285)
@@ -388,7 +1261,7 @@
 - aot: Implement a few more relocation types for riscv (#2318)
 - wasi-nn: Add support of wasi-nn as shared lib (#2310)
 - Add a few more assertions on structures to which aot abi is sensitive (#2326)
-- Fix sanitizer errors in posix socket  (#2331)
+- Fix sanitizer errors in posix socket (#2331)
 - Add "--xip" option for wamrc (#2336)
 - Add "--enable-llvm-passes=<passes>" option to wamrc (#2335)
 - Make memory access boundary check behavior configurable (#2289)
@@ -432,6 +1305,7 @@
 - Clone the input binary during wasm_module_validate (#2483)
 
 ### Others
+
 - Nuttx CI: Ignore the expired certificate for riscv gcc toolchain (#2222)
 - core/iwasm/compilation: constify a bit (#2223)
 - Bump requests from 2.28.2 to 2.31.0 in /build-scripts (#2229)
@@ -454,9 +1328,11 @@
 ### Breaking Changes
 
 ### New Features
+
 - Implement Fast JIT multi-threading feature (#2134)
 
 ### Bug Fixes
+
 - Update request.ts wasm_response_send signature (#2122)
 - Fix ems allocator unaligned memory access on riscv64 (#2140)
 - libc_wasi_wrapper.c: Fix min func issue for size_t < 8 bytes on some platforms (#2152)
@@ -465,6 +1341,7 @@
 - Fix wamr-ide debugger ignoring launch config (#2155)
 
 ### Enhancements
+
 - Add test for validating linear memory size updates (#2078)
 - Update Zephyr docs to remove unsupported west subcommand (#2128)
 - Update messages/comments to refer the new place of the version definition (#2133)
@@ -483,6 +1360,7 @@
 - Fix compile warnings on windows platform (#2208)
 
 ### Others
+
 - CI: Add ubsan checks to samples/wasm-c-api (#2147)
 - CI: More precise trigger paths for github actions (#2157)
 
@@ -495,6 +1373,7 @@
 ### New Features
 
 ### Bug Fixes
+
 - libc-wasi/posix.c: Fix POLL{RD,WR}NORM in uClibc (#2069)
 - Fix bh_assert for 64-bit platforms (#2071)
 - wamr-ide: Modify Dockerfile to update base image version and fix build issue (#2068)
@@ -508,6 +1387,7 @@
 - Fix interpreter read linear memory size for multi-threading (#2088)
 
 ### Enhancements
+
 - Limit the minimal size of bh_hashmap (#2073)
 - Bump tensorflow to 2.11.1 in /core/iwasm/libraries/wasi-nn/test (#2061)
 - Bump tensorflow to 2.11.1 in install_tensorflow.sh (#2076)
@@ -515,6 +1395,7 @@
 - Update documents (#2100)
 
 ### Others
+
 - spectest/nuttx: Increase stack size of iwasm task (#2082)
 - ci: Refactor windows build definition (#2087)
 - ci: Enable WASI threads in CI (#2086)
@@ -526,8 +1407,8 @@
 
 ### Breaking Changes
 
-
 ### New Features
+
 - Implement two-level Multi-tier JIT engine: tier-up from Fast JIT to LLVM JIT to get quick cold startup and better performance
 - Enable running mode control for runtime, wasm module instance and iwasm
 - Implement wasi-threads feature
@@ -540,6 +1421,7 @@
 - Add libsodium benchmark
 
 ### Bug Fixes
+
 - Fix wasm-c-api import func link issue in wasm_instance_new
 - Fix watchpoint segfault when using debug interp without server
 - libc-wasi: Fix spurious poll timeout
@@ -568,6 +1450,7 @@
 - fix debugger: Set termination flags also when in debug mode
 
 ### Enhancements
+
 - Add WAMR-IDE vscode extension to the Visual Studio Marketplace
 - Refine Windows thread waiting list operations
 - Improve wasm-c-api instantiation-time linking
@@ -608,6 +1491,7 @@
 - Refine aot compiler check suspend_flags and fix issue of multi-tier jit
 
 ### Others
+
 - Enable XIP in CI daily test
 - Integrate wasi test suite to wamr-test-suites and CI
 - Add CI for wasi-threads tests
@@ -622,6 +1506,7 @@
 ## WAMR-1.1.2
 
 ### Breaking Changes
+
 - Remove the LLVM MCJIT mode, replace it with LLVM ORC JIT eager mode
 - Add option to pass user data to the allocator functions of RuntimeInitArgs
 - Change how iwasm returns:
@@ -631,6 +1516,7 @@
 - Enable bulk memory by default
 
 ### New Features
+
 - Add control for the native stack check with hardware trap
 - Add memory watchpoint support to debugger
 - Add wasm_module_obtain() to clone wasm_module_t
@@ -638,6 +1524,7 @@
 - esp-idf: Add socket support for esp-idf platform
 
 ### Bug Fixes
+
 - Fix XIP issue caused by rem_s on RISC-V
 - Fix XIP issues of fp to int cast and int rem/div
 - Fix missing float cmp for XIP
@@ -657,6 +1544,7 @@
 - Fix XIP issue of handling 64-bit const in 32-bit target
 
 ### Enhancements
+
 - Refactor the layout of interpreter and AOT module instance
 - Refactor LLVM JIT: remove mcjit and legacy pass manager, upgrade to ORCv2 JIT
 - Refine Fast JIT call indirect and call native process
@@ -673,7 +1561,7 @@
 - Refine the stack frame size check in interpreter
 - Enlarge the default wasm operand stack size to 64KB
 - Use cmake POSITION_INDEPENDENT_CODE instead of hardcoding -pie -fPIE
-- Implement R_ARM_THM_MOVT_[ABS|REPL] for thumb
+- Implement R*ARM_THM_MOVT*[ABS|REPL] for thumb
 - Suppress the warnings when building with GCC11
 - samples/native-lib: Add a bit more complicated example
 - Add mutex initializer for wasm-c-api engine operations
@@ -701,6 +1589,7 @@
 - Enable wasm cache loading in wasm-c-api
 
 ### Others
+
 - Add CIs to release new version and publish binary files
 - Add more compilation groups of fast jit into CI
 - Enable spec test on nuttx and daily run it
@@ -849,5 +1738,3 @@
 ### Others
 
 ---
-
-

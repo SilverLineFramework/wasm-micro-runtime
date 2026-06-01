@@ -24,8 +24,6 @@ create_native_stack_bound(const AOTCompContext *comp_ctx,
 static bool
 create_native_stack_top_min(const AOTCompContext *comp_ctx,
                             AOTFuncContext *func_ctx);
-static bool
-create_func_ptrs(const AOTCompContext *comp_ctx, AOTFuncContext *func_ctx);
 
 LLVMTypeRef
 wasm_type_to_llvm_type(const AOTCompContext *comp_ctx,
@@ -85,7 +83,7 @@ aot_add_llvm_func1(const AOTCompContext *comp_ctx, LLVMModuleRef module,
                    uint32 func_index, uint32 param_count, LLVMTypeRef func_type,
                    const char *prefix)
 {
-    char func_name[48];
+    char func_name[48] = { 0 };
     LLVMValueRef func;
     LLVMValueRef local_value;
     uint32 i, j;
@@ -560,51 +558,8 @@ aot_build_precheck_function(AOTCompContext *comp_ctx, LLVMModuleRef module,
     if (ret_type == VOID_TYPE) {
         name = "";
     }
-
-    LLVMValueRef retval;
-    if (comp_ctx->is_indirect_mode
-        && !strncmp(comp_ctx->target_arch, "xtensa", 6)) {
-        /* call wrapped_func indirectly */
-        if (!create_func_ptrs(comp_ctx, func_ctx)) {
-            goto fail;
-        }
-
-        LLVMTypeRef func_ptr_type;
-        LLVMValueRef wrapped_func_indirect;
-        uint32 import_func_count = comp_ctx->comp_data->import_func_count;
-        uint32 func_count = comp_ctx->func_ctx_count;
-
-        /* Check function index */
-        if (func_index >= import_func_count + func_count) {
-            aot_set_last_error("Function index out of range.");
-            goto fail;
-        }
-
-        /* Get function type */
-        if (!(func_ptr_type = LLVMPointerType(func_type, 0))) {
-            aot_set_last_error("create LLVM function type failed.");
-            goto fail;
-        }
-
-        /*
-         * func_index layout :
-         * aot_func#xxx, range from 0 ~ func_conut - 1;
-         * aot_func#internal#xxx,  range from func_conut ~ 2 * func_conut - 1;
-         */
-        if (!(wrapped_func_indirect = aot_get_func_from_table(
-                  comp_ctx, func_ctx->func_ptrs, func_ptr_type,
-                  func_index + func_count + import_func_count))) {
-            goto fail;
-        }
-
-        /* Call the function indirectly */
-        retval = LLVMBuildCall2(b, func_type, wrapped_func_indirect, params,
-                                param_count, name);
-    }
-    else
-        retval = LLVMBuildCall2(b, func_type, wrapped_func, params, param_count,
-                                name);
-
+    LLVMValueRef retval =
+        LLVMBuildCall2(b, func_type, wrapped_func, params, param_count, name);
     if (!retval) {
         goto fail;
     }
@@ -695,7 +650,8 @@ aot_add_llvm_func(AOTCompContext *comp_ctx, LLVMModuleRef module,
     uint32 backend_thread_num, compile_thread_num;
 
     /* Check function parameter types and result types */
-    for (i = 0; i < aot_func_type->param_count + aot_func_type->result_count;
+    for (i = 0;
+         i < (uint32)(aot_func_type->param_count + aot_func_type->result_count);
          i++) {
         if (!check_wasm_type(comp_ctx, aot_func_type->types[i]))
             return NULL;
@@ -776,8 +732,7 @@ aot_add_llvm_func(AOTCompContext *comp_ctx, LLVMModuleRef module,
                                     prefix)))
         goto fail;
 
-    if (comp_ctx->is_indirect_mode) {
-        /* avoid LUT relocations ("switch-table") */
+    if (comp_ctx->disable_llvm_jump_tables) {
         LLVMAttributeRef attr_no_jump_tables = LLVMCreateStringAttribute(
             comp_ctx->context, "no-jump-tables",
             (uint32)strlen("no-jump-tables"), "true", (uint32)strlen("true"));
@@ -800,9 +755,7 @@ aot_add_llvm_func(AOTCompContext *comp_ctx, LLVMModuleRef module,
     }
 
     if (need_precheck) {
-        if (!comp_ctx->is_jit_mode
-            && !(comp_ctx->is_indirect_mode
-                 && !strncmp(comp_ctx->target_arch, "xtensa", 6)))
+        if (!comp_ctx->is_jit_mode)
             LLVMSetLinkage(func, LLVMInternalLinkage);
         unsigned int kind =
             LLVMGetEnumAttributeKindForName("noinline", strlen("noinline"));
@@ -810,7 +763,17 @@ aot_add_llvm_func(AOTCompContext *comp_ctx, LLVMModuleRef module,
             LLVMCreateEnumAttribute(comp_ctx->context, kind, 0);
         LLVMAddAttributeAtIndex(func, LLVMAttributeFunctionIndex,
                                 attr_noinline);
-
+        if (!strcmp(comp_ctx->target_arch, "xtensa")) {
+            /* Because "func" is only called by "precheck_func", short-call
+             * should be ok. We prefer short-call because it's smaller
+             * and more importantly doesn't involve relocations.
+             */
+            LLVMAttributeRef attr_short_call = LLVMCreateStringAttribute(
+                comp_ctx->context, "short-call", (unsigned)strlen("short-call"),
+                "", 0);
+            LLVMAddAttributeAtIndex(func, LLVMAttributeFunctionIndex,
+                                    attr_short_call);
+        }
         if (!aot_build_precheck_function(comp_ctx, module, precheck_func,
                                          func_index, func_type, func))
             goto fail;
@@ -1262,7 +1225,7 @@ create_memory_info(const AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
     func_ctx->mem_space_unchanged = mem_space_unchanged;
 
     memory_count = module->memory_count + module->import_memory_count;
-    /* If the module dosen't have memory, reserve
+    /* If the module doesn't have memory, reserve
         one mem_info space with empty content */
     if (memory_count == 0)
         memory_count = 1;
@@ -1277,7 +1240,7 @@ create_memory_info(const AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
     /* Load memory base address */
 #if WASM_ENABLE_SHARED_MEMORY != 0
     is_shared_memory =
-        comp_ctx->comp_data->memories[0].memory_flags & 0x02 ? true : false;
+        comp_ctx->comp_data->memories[0].flags & 0x02 ? true : false;
     if (is_shared_memory) {
         LLVMValueRef shared_mem_addr;
         offset = I32_CONST(offsetof(AOTModuleInstance, memories));
@@ -1575,6 +1538,156 @@ create_memory_info(const AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
     return true;
 }
 
+#define BUILD_IS_NOT_NULL(value, res, name)                                \
+    do {                                                                   \
+        if (!(res = LLVMBuildIsNotNull(comp_ctx->builder, value, name))) { \
+            aot_set_last_error("llvm build is not null failed.");          \
+            goto fail;                                                     \
+        }                                                                  \
+    } while (0)
+
+#define get_module_extra_field_offset(field)                        \
+    do {                                                            \
+        offset_u32 = get_module_inst_extra_offset(comp_ctx);        \
+        if (comp_ctx->is_jit_mode)                                  \
+            offset_u32 += offsetof(WASMModuleInstanceExtra, field); \
+        else                                                        \
+            offset_u32 += offsetof(AOTModuleInstanceExtra, field);  \
+    } while (0)
+
+#define LOAD_MODULE_EXTRA_FIELD_AND_ALLOCA(field, type)                        \
+    do {                                                                       \
+        get_module_extra_field_offset(field);                                  \
+        offset = I32_CONST(offset_u32);                                        \
+        CHECK_LLVM_CONST(offset);                                              \
+        if (!(field_p = LLVMBuildInBoundsGEP2(comp_ctx->builder, INT8_TYPE,    \
+                                              func_ctx->aot_inst, &offset, 1,  \
+                                              #field "_p"))) {                 \
+            aot_set_last_error("llvm build inbounds gep failed");              \
+            goto fail;                                                         \
+        }                                                                      \
+        if (!(load_val =                                                       \
+                  LLVMBuildLoad2(comp_ctx->builder, type, field_p, #field))) { \
+            aot_set_last_error("llvm build load failed");                      \
+            goto fail;                                                         \
+        }                                                                      \
+        if (!(func_ctx->field =                                                \
+                  LLVMBuildAlloca(comp_ctx->builder, type, #field))) {         \
+            aot_set_last_error("llvm build alloca failed");                    \
+            goto fail;                                                         \
+        }                                                                      \
+        if (!LLVMBuildStore(comp_ctx->builder, load_val, func_ctx->field)) {   \
+            aot_set_last_error("llvm build store failed");                     \
+            goto fail;                                                         \
+        }                                                                      \
+    } while (0)
+
+static bool
+create_shared_heap_info(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx)
+{
+#if WASM_ENABLE_SHARED_HEAP != 0
+    LLVMValueRef offset, field_p, load_val, shared_heap_head_p,
+        shared_heap_head, cmp, field_p_or_default, shared_heap_head_start_off,
+        shared_heap_head_start_off_minus_one;
+    LLVMTypeRef shared_heap_offset_type;
+    uint32 offset_u32;
+#if WASM_ENABLE_MEMORY64 == 0
+    bool is_memory64 = false;
+#else
+    bool is_memory64 = IS_MEMORY64;
+#endif
+
+    shared_heap_offset_type =
+        comp_ctx->pointer_size == sizeof(uint64) ? I64_TYPE : I32_TYPE;
+
+    /* shared_heap_base_addr_adj, shared_heap_start_off, and
+     * shared_heap_end_off can be updated later, use local variable to
+     * represent them */
+    LOAD_MODULE_EXTRA_FIELD_AND_ALLOCA(shared_heap_base_addr_adj,
+                                       INT8_PTR_TYPE);
+    LOAD_MODULE_EXTRA_FIELD_AND_ALLOCA(shared_heap_start_off,
+                                       shared_heap_offset_type);
+    LOAD_MODULE_EXTRA_FIELD_AND_ALLOCA(shared_heap_end_off,
+                                       shared_heap_offset_type);
+
+    /* Shared Heap head start off won't be updated, no need to alloca */
+    get_module_extra_field_offset(shared_heap);
+    offset = I32_CONST(offset_u32);
+    CHECK_LLVM_CONST(offset);
+    if (!(shared_heap_head_p = LLVMBuildInBoundsGEP2(
+              comp_ctx->builder, INT8_TYPE, func_ctx->aot_inst, &offset, 1,
+              "shared_heap_head_p"))) {
+        aot_set_last_error("llvm build inbounds gep failed");
+        goto fail;
+    }
+    if (!(shared_heap_head =
+              LLVMBuildLoad2(comp_ctx->builder, INT8_PTR_TYPE,
+                             shared_heap_head_p, "shared_heap_head"))) {
+        aot_set_last_error("llvm build load failed");
+        goto fail;
+    }
+    BUILD_IS_NOT_NULL(shared_heap_head, cmp, "has_shared_heap");
+
+    if (is_memory64) {
+        offset_u32 = offsetof(WASMSharedHeap, start_off_mem64);
+    }
+    else {
+        offset_u32 = offsetof(WASMSharedHeap, start_off_mem32);
+    }
+    offset = I32_CONST(offset_u32);
+    CHECK_LLVM_CONST(offset);
+    if (!(field_p = LLVMBuildInBoundsGEP2(comp_ctx->builder, INT8_TYPE,
+                                          shared_heap_head, &offset, 1,
+                                          "head_start_off_p"))) {
+        aot_set_last_error("llvm build inbounds gep failed");
+        goto fail;
+    }
+
+    /* Select a valid shared heap head ptr or safe alloca ptr stores
+     * shared_heap_start_off(UINT32_MAX/UINT64_MAX) */
+    if (!(field_p_or_default = LLVMBuildSelect(comp_ctx->builder, cmp, field_p,
+                                               func_ctx->shared_heap_start_off,
+                                               "ptr_or_default"))) {
+        aot_set_last_error("llvm build select failed");
+        goto fail;
+    }
+
+    if (!(shared_heap_head_start_off = LLVMBuildLoad2(
+              comp_ctx->builder, shared_heap_offset_type, field_p_or_default,
+              "shared_heap_head_start_off"))) {
+        aot_set_last_error("llvm build load failed");
+        goto fail;
+    }
+    if (!(shared_heap_head_start_off_minus_one = LLVMBuildAdd(
+              comp_ctx->builder, shared_heap_head_start_off,
+              comp_ctx->pointer_size == sizeof(uint64) ? I64_NEG_ONE
+                                                       : I32_NEG_ONE,
+              "head_start_off_minus_one"))) {
+        aot_set_last_error("llvm build load failed");
+        goto fail;
+    }
+
+    /* if there is attached shared heap(s), the value will be valid start_off-1,
+     * otherwise it will be UINT32_MAX/UINT64_MAX, so during the bounds checks,
+     * when has attached shared heap:
+     *   offset > start_off - 1 => offset >= start_off
+     * when no attached shared heap:
+     *   offset > UINT32_MAX/UINT64_MAX is always false
+     * */
+    if (!(func_ctx->shared_heap_head_start_off = LLVMBuildSelect(
+              comp_ctx->builder, cmp, shared_heap_head_start_off_minus_one,
+              shared_heap_head_start_off, "head_start_off"))) {
+        aot_set_last_error("llvm build select failed");
+        goto fail;
+    }
+    return true;
+fail:
+    return false;
+#else  /* else of WASM_ENABLE_SHARED_HEAP != 0 */
+    return true;
+#endif /* end of WASM_ENABLE_SHARED_HEAP != 0 */
+}
+
 static bool
 create_cur_exception(const AOTCompContext *comp_ctx, AOTFuncContext *func_ctx)
 {
@@ -1708,7 +1821,7 @@ aot_create_stack_sizes(const AOTCompData *comp_data, AOTCompContext *comp_ctx)
          * This value is a placeholder, which will be replaced
          * after the corresponding functions are compiled.
          *
-         * Don't use zeros becasue LLVM can optimize them to
+         * Don't use zeros because LLVM can optimize them to
          * zeroinitializer.
          */
         values[i] = I32_NEG_ONE;
@@ -1742,12 +1855,14 @@ aot_create_stack_sizes(const AOTCompData *comp_data, AOTCompContext *comp_ctx)
         return false;
     }
 
-    /*
-     * make the original symbol internal. we mainly use this version to
-     * avoid creating extra relocations in the precheck functions.
-     */
-    LLVMSetLinkage(stack_sizes, LLVMInternalLinkage);
-    LLVMSetSection(stack_sizes, aot_stack_sizes_section_name);
+    if (!comp_ctx->is_jit_mode) {
+        LLVMSetLinkage(stack_sizes, LLVMInternalLinkage);
+        /*
+         * for AOT, place it into a dedicated section for the convenience
+         * of the AOT file generation and symbol resolutions.
+         */
+        LLVMSetSection(stack_sizes, aot_stack_sizes_section_name);
+    }
     comp_ctx->stack_sizes_type = stack_sizes_type;
     comp_ctx->stack_sizes = stack_sizes;
     return true;
@@ -1820,7 +1935,7 @@ aot_create_func_context(const AOTCompData *comp_data, AOTCompContext *comp_ctx,
         goto fail;
     }
 
-    if (comp_ctx->enable_aux_stack_frame
+    if (comp_ctx->aux_stack_frame_type
         && !create_aux_stack_frame(comp_ctx, func_ctx)) {
         goto fail;
     }
@@ -1856,6 +1971,19 @@ aot_create_func_context(const AOTCompData *comp_data, AOTCompContext *comp_ctx,
     if (!create_func_ptrs(comp_ctx, func_ctx)) {
         goto fail;
     }
+
+    /* Load shared heap, shared heap start off mem32 or mem64 */
+    if ((comp_ctx->enable_shared_heap || comp_ctx->enable_shared_chain)
+        && !create_shared_heap_info(comp_ctx, func_ctx)) {
+        goto fail;
+    }
+
+#if WASM_ENABLE_BRANCH_HINTS != 0
+    func_ctx->function_hints =
+        comp_ctx->comp_data->function_hints
+            ? comp_ctx->comp_data->function_hints[func_index]
+            : NULL;
+#endif
 
     return func_ctx;
 
@@ -1993,10 +2121,12 @@ aot_set_llvm_basic_types(AOTLLVMTypes *basic_types, LLVMContextRef context,
     if (pointer_size == 4) {
         basic_types->intptr_t_type = basic_types->int32_type;
         basic_types->intptr_t_ptr_type = basic_types->int32_ptr_type;
+        basic_types->size_t_type = basic_types->int32_type;
     }
     else {
         basic_types->intptr_t_type = basic_types->int64_type;
         basic_types->intptr_t_ptr_type = basic_types->int64_ptr_type;
+        basic_types->size_t_type = basic_types->int64_type;
     }
 
     basic_types->gc_ref_type = basic_types->int8_ptr_type;
@@ -2326,7 +2456,7 @@ create_target_machine_detect_host(AOTCompContext *comp_ctx)
     }
 
     if (!LLVMTargetHasJIT(target)) {
-        aot_set_last_error("unspported JIT on this platform.");
+        aot_set_last_error("unsupported JIT on this platform.");
         goto fail;
     }
 
@@ -2436,7 +2566,7 @@ orc_jit_create(AOTCompContext *comp_ctx)
     }
 
     if (comp_ctx->enable_stack_bound_check || comp_ctx->enable_stack_estimation)
-        LLVMOrcLLJITBuilderSetCompileFuncitonCreatorWithStackSizesCallback(
+        LLVMOrcLLJITBuilderSetCompileFunctionCreatorWithStackSizesCallback(
             builder, jit_stack_size_callback, comp_ctx);
 
     err = LLVMOrcJITTargetMachineBuilderDetectHost(&jtmb);
@@ -2493,7 +2623,8 @@ aot_compiler_init(void)
     LLVMInitializeCore(LLVMGetGlobalPassRegistry());
 #endif
 
-#if WASM_ENABLE_WAMR_COMPILER != 0
+/* fuzzing only use host targets for simple */
+#if WASM_ENABLE_WAMR_COMPILER != 0 && WASM_ENABLE_FUZZ_TEST == 0
     /* Init environment of all targets for AOT compiler */
     LLVMInitializeAllTargetInfos();
     LLVMInitializeAllTargets();
@@ -2540,6 +2671,25 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
     comp_ctx->comp_data = comp_data;
 
     /* Create LLVM context, module and builder */
+#if LLVM_VERSION_MAJOR >= 21
+    /* Construct an LLVMContext directly, note:
+         different from non LAZY JIT mode, no need to dispose this context, if
+         will be disposed when the thread safe context is disposed */
+    comp_ctx->context = LLVMContextCreate();
+    if (!comp_ctx->context) {
+        aot_set_last_error("create LLVM Context failed.");
+        goto fail;
+    }
+
+    /* Wrap the LLVM context in a thread safe context. */
+    comp_ctx->orc_thread_safe_context =
+        LLVMOrcCreateNewThreadSafeContextFromLLVMContext(comp_ctx->context);
+    if (!comp_ctx->orc_thread_safe_context) {
+        aot_set_last_error(
+            "Create LLVM ThreadSafeContext from LLVMContext failed.");
+        goto fail;
+    }
+#else  /* LLVM_VERSION_MAJOR < 21 */
     comp_ctx->orc_thread_safe_context = LLVMOrcCreateNewThreadSafeContext();
     if (!comp_ctx->orc_thread_safe_context) {
         aot_set_last_error("create LLVM ThreadSafeContext failed.");
@@ -2554,6 +2704,7 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
         aot_set_last_error("get context from LLVM ThreadSafeContext failed.");
         goto fail;
     }
+#endif /* LLVM_VERSION_MAJOR >= 21 */
 
     if (!(comp_ctx->builder = LLVMCreateBuilderInContext(comp_ctx->context))) {
         aot_set_last_error("create LLVM builder failed.");
@@ -2568,6 +2719,9 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
         aot_set_last_error("create LLVM module failed.");
         goto fail;
     }
+#if LLVM_VERSION_MAJOR >= 19
+    LLVMSetIsNewDbgInfoFormat(comp_ctx->module, true);
+#endif
 
 #if WASM_ENABLE_LINUX_PERF != 0
     if (wasm_runtime_get_linux_perf()) {
@@ -2612,6 +2766,9 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
     if (option->enable_bulk_memory)
         comp_ctx->enable_bulk_memory = true;
 
+    if (option->enable_bulk_memory_opt)
+        comp_ctx->enable_bulk_memory_opt = true;
+
     if (option->enable_thread_mgr)
         comp_ctx->enable_thread_mgr = true;
 
@@ -2621,8 +2778,11 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
     if (option->enable_ref_types)
         comp_ctx->enable_ref_types = true;
 
-    if (option->enable_aux_stack_frame)
-        comp_ctx->enable_aux_stack_frame = true;
+    if (option->enable_call_indirect_overlong)
+        comp_ctx->enable_call_indirect_overlong = true;
+
+    comp_ctx->aux_stack_frame_type = option->aux_stack_frame_type;
+    comp_ctx->call_stack_features = option->call_stack_features;
 
     if (option->enable_perf_profiling)
         comp_ctx->enable_perf_profiling = true;
@@ -2633,11 +2793,17 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
     if (option->enable_aux_stack_check)
         comp_ctx->enable_aux_stack_check = true;
 
-    if (option->is_indirect_mode)
+    if (option->is_indirect_mode) {
         comp_ctx->is_indirect_mode = true;
+        /* avoid LUT relocations ("switch-table") */
+        comp_ctx->disable_llvm_jump_tables = true;
+    }
 
     if (option->disable_llvm_intrinsics)
         comp_ctx->disable_llvm_intrinsics = true;
+
+    if (option->disable_llvm_jump_tables)
+        comp_ctx->disable_llvm_jump_tables = true;
 
     if (option->disable_llvm_lto)
         comp_ctx->disable_llvm_lto = true;
@@ -2662,6 +2828,15 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
 
     if (option->enable_gc)
         comp_ctx->enable_gc = true;
+
+    if (option->enable_shared_heap)
+        comp_ctx->enable_shared_heap = true;
+
+    if (option->enable_shared_chain)
+        comp_ctx->enable_shared_chain = true;
+
+    if (option->enable_extended_const)
+        comp_ctx->enable_extended_const = true;
 
     comp_ctx->opt_level = option->opt_level;
     comp_ctx->size_level = option->size_level;
@@ -2702,20 +2877,29 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
     }
     else {
         /* Create LLVM target machine */
-        arch = option->target_arch;
-        abi = option->target_abi;
-        cpu = option->target_cpu;
-        features = option->cpu_features;
+        if (!option->target_arch || !strstr(option->target_arch, "-")) {
+            /* Retrieve the target triple based on user input */
+            triple = NULL;
+            arch = option->target_arch;
+            abi = option->target_abi;
+            cpu = option->target_cpu;
+            features = option->cpu_features;
+        }
+        else {
+            /* Form a target triple */
+            triple = option->target_arch;
+            arch = NULL;
+            abi = NULL;
+            cpu = NULL;
+            features = NULL;
+        }
+
         opt_level = option->opt_level;
         size_level = option->size_level;
 
         /* verify external llc compiler */
         comp_ctx->external_llc_compiler = getenv("WAMRC_LLC_COMPILER");
         if (comp_ctx->external_llc_compiler) {
-#if defined(_WIN32) || defined(_WIN32_)
-            comp_ctx->external_llc_compiler = NULL;
-            LOG_WARNING("External LLC compiler not supported on Windows.");
-#else
             if (access(comp_ctx->external_llc_compiler, X_OK) != 0) {
                 LOG_WARNING("WAMRC_LLC_COMPILER [%s] not found, fallback to "
                             "default pipeline",
@@ -2727,17 +2911,12 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
                 LOG_VERBOSE("Using external LLC compiler [%s]",
                             comp_ctx->external_llc_compiler);
             }
-#endif
         }
 
         /* verify external asm compiler */
         if (!comp_ctx->external_llc_compiler) {
             comp_ctx->external_asm_compiler = getenv("WAMRC_ASM_COMPILER");
             if (comp_ctx->external_asm_compiler) {
-#if defined(_WIN32) || defined(_WIN32_)
-                comp_ctx->external_asm_compiler = NULL;
-                LOG_WARNING("External ASM compiler not supported on Windows.");
-#else
                 if (access(comp_ctx->external_asm_compiler, X_OK) != 0) {
                     LOG_WARNING(
                         "WAMRC_ASM_COMPILER [%s] not found, fallback to "
@@ -2750,7 +2929,6 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
                     LOG_VERBOSE("Using external ASM compiler [%s]",
                                 comp_ctx->external_asm_compiler);
                 }
-#endif
             }
         }
 
@@ -2834,6 +3012,15 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
                 bh_assert(vendor_sys);
                 bh_memcpy_s(default_arch, sizeof(default_arch), default_triple,
                             (uint32)(vendor_sys - default_triple));
+                /**
+                 * On Mac M[1-9]+ LLVM will report arm64 as the
+                 * architecture, for the purposes of wamr this is the
+                 * same as aarch64v8 so we'll normalize it here.
+                 */
+                if (!strcmp(default_arch, "arm64")) {
+                    bh_strcpy_s(default_arch, sizeof(default_arch),
+                                "aarch64v8");
+                }
                 arch1 = default_arch;
 
                 LLVMDisposeMessage(default_triple);
@@ -2852,6 +3039,10 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
                     vendor_sys = "-pc-win32-";
                 else
                     vendor_sys = "-pc-windows-";
+            }
+            else if (!strcmp(abi, "darwin") || !strcmp(abi, "macho")) {
+                /* macOS/Darwin: x18 is reserved by Apple */
+                vendor_sys = "-apple-";
             }
             else {
                 if (is_baremetal_target(arch, cpu, abi))
@@ -2897,6 +3088,14 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
                 vendor_sys = "-unknown-none-";
                 if (!abi)
                     abi = "gnu";
+            }
+            else if (strstr(default_triple, "darwin")
+                     || strstr(default_triple, "apple")) {
+                /* macOS/Darwin: x18 is reserved by Apple, must use correct
+                 * triple to prevent LLVM from using it */
+                vendor_sys = "-apple-darwin";
+                if (!abi)
+                    abi = "";
             }
             else {
                 vendor_sys = "-pc-linux-";
@@ -2947,6 +3146,7 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
                 aot_set_last_error(buf);
                 goto fail;
             }
+            LOG_VERBOSE("triple: %s => normailized: %s", triple, triple_norm);
             if (!cpu)
                 cpu = "";
         }
@@ -2986,6 +3186,30 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
         if (!features)
             features = "";
 
+#if (defined(__APPLE__) || defined(__MACH__)) && defined(BUILD_TARGET_AARCH64)
+        /* On macOS ARM64, x18 is reserved by Apple for TLS. Even though we're
+         * generating ELF (Linux-style) AOT files, we must tell LLVM to not
+         * use x18, otherwise the AOT code will crash when running on macOS. */
+        {
+            bool is_aarch64 = false;
+            if (arch && !strncmp(arch, "aarch64", 7))
+                is_aarch64 = true;
+            else if (triple_norm && strstr(triple_norm, "aarch64"))
+                is_aarch64 = true;
+
+            if (is_aarch64) {
+                if (features[0] != '\0') {
+                    snprintf(features_buf, sizeof(features_buf),
+                             "%s,+reserve-x18", features);
+                    features = features_buf;
+                }
+                else {
+                    features = "+reserve-x18";
+                }
+            }
+        }
+#endif
+
         /* Get target with triple, note that LLVMGetTargetFromTriple()
            return 0 when success, but not true. */
         if (LLVMGetTargetFromTriple(triple_norm, &target, &err) != 0) {
@@ -3004,12 +3228,12 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
                                     sizeof(comp_ctx->target_arch));
 
         if (option->bounds_checks == 1 || option->bounds_checks == 0) {
-            /* Set by user */
+            /* Set by the user */
             comp_ctx->enable_bound_check =
                 (option->bounds_checks == 1) ? true : false;
         }
         else {
-            /* Unset by user, use default value */
+            /* Unset by the user, use the default value */
             if (strstr(comp_ctx->target_arch, "64")
                 && !option->is_sgx_platform) {
                 comp_ctx->enable_bound_check = false;
@@ -3019,16 +3243,16 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
             }
         }
 
-        if (comp_ctx->enable_bound_check) {
-            /* Always enable stack boundary check if `bounds-checks`
-               is enabled */
-            comp_ctx->enable_stack_bound_check = true;
-        }
-        else {
-            /* When `bounds-checks` is disabled, we set stack boundary
-               check status according to the input option */
+        if (option->stack_bounds_checks == 1
+            || option->stack_bounds_checks == 0) {
+            /* Set by the user */
             comp_ctx->enable_stack_bound_check =
                 (option->stack_bounds_checks == 1) ? true : false;
+        }
+        else {
+            /* Unset by the user, use the default value, it will be the same
+             * value as the bound check */
+            comp_ctx->enable_stack_bound_check = comp_ctx->enable_bound_check;
         }
 
         if ((comp_ctx->enable_stack_bound_check
@@ -3151,6 +3375,21 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
 
 #if WASM_ENABLE_WAMR_COMPILER != 0
     WASMModule *wasm_module = (WASMModule *)comp_data->wasm_module;
+    bool is_memory64 = false;
+
+    /* TODO: multi-memories for now assuming the memory64 flag of a memory is
+     * consistent across multi-memories */
+    if (wasm_module->import_memory_count > 0)
+        is_memory64 = !!(wasm_module->import_memories[0].u.memory.mem_type.flags
+                         & MEMORY64_FLAG);
+    else if (wasm_module->memory_count > 0)
+        is_memory64 = !!(wasm_module->memories[0].flags & MEMORY64_FLAG);
+
+    if (!(option->bounds_checks == 1 || option->bounds_checks == 0)
+        && is_memory64) {
+        /* For memory64, the boundary check default value is true */
+        comp_ctx->enable_bound_check = true;
+    }
 
     /* Return error if SIMD is disabled by command line but SIMD instructions
      * are used */
@@ -3160,20 +3399,35 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
         goto fail;
     }
 
+    /* Return error if ref-types and GC are disabled by command line but
+       ref-types instructions are used */
+    if (!option->enable_call_indirect_overlong && !option->enable_gc
+        && wasm_module->is_ref_types_used) {
+        aot_set_last_error("ref-types instruction was found, "
+                           "try removing --disable-ref-types option "
+                           "or adding --enable-gc option.");
+        goto fail;
+    }
+
     /* Disable features when they are not actually used */
     if (!wasm_module->is_simd_used) {
         option->enable_simd = comp_ctx->enable_simd = false;
     }
     if (!wasm_module->is_ref_types_used) {
         option->enable_ref_types = comp_ctx->enable_ref_types = false;
+        option->enable_call_indirect_overlong =
+            comp_ctx->enable_call_indirect_overlong = false;
     }
     if (!wasm_module->is_bulk_memory_used) {
         option->enable_bulk_memory = comp_ctx->enable_bulk_memory = false;
+        option->enable_bulk_memory_opt = comp_ctx->enable_bulk_memory_opt =
+            false;
     }
 #endif
 
     if (option->enable_simd && strcmp(comp_ctx->target_arch, "x86_64") != 0
-        && strncmp(comp_ctx->target_arch, "aarch64", 7) != 0) {
+        && strncmp(comp_ctx->target_arch, "aarch64", 7) != 0
+        && strcmp(comp_ctx->target_arch, "arc") != 0) {
         /* Disable simd if it isn't supported by target arch */
         option->enable_simd = false;
     }
@@ -3290,6 +3544,11 @@ aot_destroy_comp_context(AOTCompContext *comp_ctx)
     if (comp_ctx->builder)
         LLVMDisposeBuilder(comp_ctx->builder);
 
+#if WASM_ENABLE_DEBUG_AOT != 0
+    if (comp_ctx->debug_builder)
+        LLVMDisposeDIBuilder(comp_ctx->debug_builder);
+#endif
+
     if (comp_ctx->orc_thread_safe_context)
         LLVMOrcDisposeThreadSafeContext(comp_ctx->orc_thread_safe_context);
 
@@ -3329,6 +3588,7 @@ static bool
 insert_native_symbol(AOTCompContext *comp_ctx, const char *symbol, int32 idx)
 {
     AOTNativeSymbol *sym = wasm_runtime_malloc(sizeof(AOTNativeSymbol));
+    int ret;
 
     if (!sym) {
         aot_set_last_error("alloc native symbol failed.");
@@ -3337,7 +3597,12 @@ insert_native_symbol(AOTCompContext *comp_ctx, const char *symbol, int32 idx)
 
     memset(sym, 0, sizeof(AOTNativeSymbol));
     bh_assert(strlen(symbol) <= sizeof(sym->symbol));
-    snprintf(sym->symbol, sizeof(sym->symbol), "%s", symbol);
+    ret = snprintf(sym->symbol, sizeof(sym->symbol), "%s", symbol);
+    if (ret < 0 || ret + 1 > (int)sizeof(sym->symbol)) {
+        wasm_runtime_free(sym);
+        aot_set_last_error_v("symbol name too long: %s", symbol);
+        return false;
+    }
     sym->index = idx;
 
     if (BH_LIST_ERROR == bh_list_insert(&comp_ctx->native_symbols, sym)) {
@@ -3357,7 +3622,7 @@ aot_get_native_symbol_index(AOTCompContext *comp_ctx, const char *symbol)
 
     sym = bh_list_first_elem(&comp_ctx->native_symbols);
 
-    /* Lookup an existing symobl record */
+    /* Lookup an existing symbol record */
 
     while (sym) {
         if (strcmp(sym->symbol, symbol) == 0) {
@@ -3582,7 +3847,7 @@ aot_block_destroy(AOTCompContext *comp_ctx, AOTBlock *block)
 
 bool
 aot_checked_addr_list_add(AOTFuncContext *func_ctx, uint32 local_idx,
-                          uint32 offset, uint32 bytes)
+                          uint64 offset, uint32 bytes)
 {
     AOTCheckedAddr *node = func_ctx->checked_addr_list;
 
@@ -3626,7 +3891,7 @@ aot_checked_addr_list_del(AOTFuncContext *func_ctx, uint32 local_idx)
 
 bool
 aot_checked_addr_list_find(AOTFuncContext *func_ctx, uint32 local_idx,
-                           uint32 offset, uint32 bytes)
+                           uint64 offset, uint32 bytes)
 {
     AOTCheckedAddr *node = func_ctx->checked_addr_list;
 
@@ -3909,7 +4174,7 @@ aot_get_func_from_table(const AOTCompContext *comp_ctx, LLVMValueRef base,
 
     if (!(func =
               LLVMBuildBitCast(comp_ctx->builder, func, func_type, "func"))) {
-        aot_set_last_error("cast function fialed.");
+        aot_set_last_error("cast function failed.");
         goto fail;
     }
 
@@ -3978,7 +4243,7 @@ aot_load_const_from_table(AOTCompContext *comp_ctx, LLVMValueRef base,
 
     if (!(const_addr = LLVMBuildBitCast(comp_ctx->builder, const_addr,
                                         const_ptr_type, "const_addr"))) {
-        aot_set_last_error("cast const fialed.");
+        aot_set_last_error("cast const failed.");
         return NULL;
     }
 

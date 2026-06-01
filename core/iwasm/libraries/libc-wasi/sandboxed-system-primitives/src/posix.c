@@ -285,7 +285,7 @@ fd_prestats_get_entry(struct fd_prestats *pt, __wasi_fd_t fd,
                       struct fd_prestat **ret) REQUIRES_SHARED(pt->lock)
 {
     // Test for file descriptor existence.
-    if (fd >= pt->size)
+    if ((size_t)fd >= pt->size)
         return __WASI_EBADF;
     struct fd_prestat *prestat = &pt->prestats[fd];
     if (prestat->dir == NULL)
@@ -301,7 +301,7 @@ static __wasi_errno_t
 fd_prestats_remove_entry(struct fd_prestats *pt, __wasi_fd_t fd)
 {
     // Test for file descriptor existence.
-    if (fd >= pt->size)
+    if ((size_t)fd >= pt->size)
         return __WASI_EBADF;
     struct fd_prestat *prestat = &pt->prestats[fd];
 
@@ -356,16 +356,20 @@ fd_table_get_entry(struct fd_table *ft, __wasi_fd_t fd,
     REQUIRES_SHARED(ft->lock)
 {
     // Test for file descriptor existence.
-    if (fd >= ft->size)
+    if ((size_t)fd >= ft->size) {
         return __WASI_EBADF;
+    }
+
     struct fd_entry *fe = &ft->entries[fd];
-    if (fe->object == NULL)
+    if (fe->object == NULL) {
         return __WASI_EBADF;
+    }
 
     // Validate rights.
     if ((~fe->rights_base & rights_base) != 0
-        || (~fe->rights_inheriting & rights_inheriting) != 0)
+        || (~fe->rights_inheriting & rights_inheriting) != 0) {
         return __WASI_ENOTCAPABLE;
+    }
     *ret = fe;
     return 0;
 }
@@ -426,15 +430,17 @@ fd_table_attach(struct fd_table *ft, __wasi_fd_t fd, struct fd_object *fo,
                 __wasi_rights_t rights_base, __wasi_rights_t rights_inheriting)
     REQUIRES_EXCLUSIVE(ft->lock) CONSUMES(fo->refcount)
 {
-    assert(ft->size > fd && "File descriptor table too small");
+    bh_assert(ft->size <= INT_MAX
+              && "Unsigned value is out of signed int range");
+    bh_assert((int32_t)ft->size > fd && "File descriptor table too small");
     struct fd_entry *fe = &ft->entries[fd];
-    assert(fe->object == NULL
-           && "Attempted to overwrite an existing descriptor");
+    bh_assert(fe->object == NULL
+              && "Attempted to overwrite an existing descriptor");
     fe->object = fo;
     fe->rights_base = rights_base;
     fe->rights_inheriting = rights_inheriting;
     ++ft->used;
-    assert(ft->size >= ft->used * 2 && "File descriptor too full");
+    bh_assert(ft->size >= ft->used * 2 && "File descriptor too full");
 }
 
 // Detaches a file descriptor from the file descriptor table.
@@ -442,12 +448,14 @@ static void
 fd_table_detach(struct fd_table *ft, __wasi_fd_t fd, struct fd_object **fo)
     REQUIRES_EXCLUSIVE(ft->lock) PRODUCES((*fo)->refcount)
 {
-    assert(ft->size > fd && "File descriptor table too small");
+    bh_assert(ft->size <= INT_MAX
+              && "Unsigned value is out of signed int range");
+    bh_assert((int32_t)ft->size > fd && "File descriptor table too small");
     struct fd_entry *fe = &ft->entries[fd];
     *fo = fe->object;
-    assert(*fo != NULL && "Attempted to detach nonexistent descriptor");
+    bh_assert(*fo != NULL && "Attempted to detach nonexistent descriptor");
     fe->object = NULL;
-    assert(ft->used > 0 && "Reference count mismatch");
+    bh_assert(ft->used > 0 && "Reference count mismatch");
     --ft->used;
 }
 
@@ -459,8 +467,27 @@ fd_determine_type_rights(os_file_handle fd, __wasi_filetype_t *type,
                          __wasi_rights_t *rights_inheriting)
 {
     struct __wasi_filestat_t buf;
-    __wasi_errno_t error = os_fstat(fd, &buf);
+    __wasi_errno_t error;
 
+    if (os_is_stdin_handle(fd)) {
+        *rights_base = RIGHTS_STDIN;
+        *rights_inheriting = RIGHTS_STDIN;
+        return __WASI_ESUCCESS;
+    }
+
+    if (os_is_stdout_handle(fd)) {
+        *rights_base = RIGHTS_STDOUT;
+        *rights_inheriting = RIGHTS_STDOUT;
+        return __WASI_ESUCCESS;
+    }
+
+    if (os_is_stderr_handle(fd)) {
+        *rights_base = RIGHTS_STDERR;
+        *rights_inheriting = RIGHTS_STDERR;
+        return __WASI_ESUCCESS;
+    }
+
+    error = os_fstat(fd, &buf);
     if (error != __WASI_ESUCCESS)
         return error;
 
@@ -617,7 +644,7 @@ fd_table_insert_existing(struct fd_table *ft, __wasi_fd_t in,
 static __wasi_errno_t
 fd_table_unused(struct fd_table *ft, __wasi_fd_t *out) REQUIRES_SHARED(ft->lock)
 {
-    assert(ft->size > ft->used && "File descriptor table has no free slots");
+    bh_assert(ft->size > ft->used && "File descriptor table has no free slots");
     for (;;) {
         uintmax_t random_fd = 0;
         __wasi_errno_t error = random_uniform(ft->size, &random_fd);
@@ -650,8 +677,10 @@ fd_table_insert(wasm_exec_env_t exec_env, struct fd_table *ft,
 
     __wasi_errno_t error = fd_table_unused(ft, out);
 
-    if (error != __WASI_ESUCCESS)
+    if (error != __WASI_ESUCCESS) {
+        rwlock_unlock(&ft->lock);
         return error;
+    }
 
     fd_table_attach(ft, *out, fo, rights_base, rights_inheriting);
     rwlock_unlock(&ft->lock);
@@ -1201,43 +1230,56 @@ __wasi_errno_t
 readlinkat_dup(os_file_handle handle, const char *path, size_t *p_len,
                char **out_buf)
 {
-    char *buf = NULL;
-    size_t len = 32;
-    size_t len_org = len;
+    __wasi_errno_t error;
+    struct __wasi_filestat_t stat = { 0 };
+    size_t buf_len;
 
+    /*
+     * use fstatat to get a better estimation
+     * If path is a symbolic link, do not dereference it:
+     * instead return information about the link itself,
+     * like lstat().
+     */
+    error = os_fstatat(handle, path, &stat, 0);
+    if (error != __WASI_ESUCCESS) {
+        stat.st_size = 0;
+    }
+
+    /*
+     * Some magic symlinks report `st_size` as zero. In that case, take
+     * 32 as the initial buffer size. Otherwise, use `st_size + 1`.
+     */
+    buf_len = stat.st_size ? stat.st_size + 1 : 32;
     for (;;) {
-        char *newbuf = wasm_runtime_malloc((uint32)len);
+        size_t bytes_read = 0;
+        char *buf;
 
-        if (newbuf == NULL) {
-            if (buf)
-                wasm_runtime_free(buf);
+        buf = wasm_runtime_malloc((uint32)buf_len);
+        if (buf == NULL) {
             *out_buf = NULL;
             return __WASI_ENOMEM;
         }
 
-        if (buf != NULL) {
-            bh_memcpy_s(newbuf, (uint32)len, buf, (uint32)len_org);
-            wasm_runtime_free(buf);
-        }
-
-        buf = newbuf;
-        size_t bytes_read = 0;
-        __wasi_errno_t error =
-            os_readlinkat(handle, path, buf, len, &bytes_read);
+        error = os_readlinkat(handle, path, buf, buf_len, &bytes_read);
         if (error != __WASI_ESUCCESS) {
             wasm_runtime_free(buf);
+            *p_len = 0;
             *out_buf = NULL;
             return error;
         }
-        if ((size_t)bytes_read + 1 < len) {
-            buf[bytes_read] = '\0';
-            *p_len = len;
-            *out_buf = buf;
 
+        /* not truncated */
+        if (bytes_read < buf_len) {
+            buf[bytes_read] = '\0';
+            *p_len = bytes_read + 1;
+            *out_buf = buf;
             return __WASI_ESUCCESS;
         }
-        len_org = len;
-        len *= 2;
+
+        /* truncated, try again with a bigger buf */
+        wasm_runtime_free(buf);
+        buf = NULL;
+        buf_len *= 2;
     }
 }
 
@@ -1516,7 +1558,8 @@ path_put(struct path_access *pa) UNLOCKS(pa->fd_object->refcount)
 {
     if (pa->path_start)
         wasm_runtime_free(pa->path_start);
-    if (pa->fd_object->file_handle != pa->fd)
+    /* Can't use `!=` operator when `os_file_handle` is a struct */
+    if (!os_compare_file_handle(pa->fd_object->file_handle, pa->fd))
         os_close(pa->fd, false);
     fd_object_release(NULL, pa->fd_object);
 }
@@ -1857,7 +1900,7 @@ wasmtime_ssp_fd_filestat_get(wasm_exec_env_t exec_env, struct fd_table *curfds,
 }
 
 static void
-convert_timestamp(__wasi_timestamp_t in, struct timespec *out)
+convert_timestamp(__wasi_timestamp_t in, os_timespec *out)
 {
     // Store sub-second remainder.
 #if defined(__SYSCALL_SLONG_TYPE)
@@ -1865,10 +1908,10 @@ convert_timestamp(__wasi_timestamp_t in, struct timespec *out)
 #else
     out->tv_nsec = (long)(in % 1000000000);
 #endif
-    in /= 1000000000;
+    __wasi_timestamp_t temp = in / 1000000000;
 
     // Clamp to the maximum in case it would overflow our system's time_t.
-    out->tv_sec = (time_t)in < BH_TIME_T_MAX ? (time_t)in : BH_TIME_T_MAX;
+    out->tv_sec = (time_t)temp < BH_TIME_T_MAX ? (time_t)temp : BH_TIME_T_MAX;
 }
 
 __wasi_errno_t
@@ -2055,7 +2098,7 @@ wasmtime_ssp_poll_oneoff(wasm_exec_env_t exec_env, struct fd_table *curfds,
                          size_t nsubscriptions,
                          size_t *nevents) NO_LOCK_ANALYSIS
 {
-#ifdef BH_PLATFORM_WINDOWS
+#if defined(BH_PLATFORM_WINDOWS)
     return __WASI_ENOSYS;
 #else
     // Sleeping.
@@ -2067,7 +2110,7 @@ wasmtime_ssp_poll_oneoff(wasm_exec_env_t exec_env, struct fd_table *curfds,
 #if CONFIG_HAS_CLOCK_NANOSLEEP
         clockid_t clock_id;
         if (wasi_clockid_to_clockid(in[0].u.u.clock.clock_id, &clock_id)) {
-            struct timespec ts;
+            os_timespec ts;
             convert_timestamp(in[0].u.u.clock.timeout, &ts);
             int ret = clock_nanosleep(
                 clock_id,
@@ -2094,7 +2137,7 @@ wasmtime_ssp_poll_oneoff(wasm_exec_env_t exec_env, struct fd_table *curfds,
                 else {
                     // Perform relative sleeps on the monotonic clock also using
                     // nanosleep(). This is incorrect, but good enough for now.
-                    struct timespec ts;
+                    os_timespec ts;
                     convert_timestamp(in[0].u.u.clock.timeout, &ts);
                     nanosleep(&ts, NULL);
                 }
@@ -2122,7 +2165,7 @@ wasmtime_ssp_poll_oneoff(wasm_exec_env_t exec_env, struct fd_table *curfds,
                 }
                 else {
                     // Relative sleeps can be done using nanosleep().
-                    struct timespec ts;
+                    os_timespec ts;
                     convert_timestamp(in[0].u.u.clock.timeout, &ts);
                     nanosleep(&ts, NULL);
                 }
@@ -2147,7 +2190,7 @@ wasmtime_ssp_poll_oneoff(wasm_exec_env_t exec_env, struct fd_table *curfds,
         wasm_runtime_malloc((uint32)(nsubscriptions * sizeof(*fos)));
     if (fos == NULL)
         return __WASI_ENOMEM;
-    struct pollfd *pfds =
+    os_poll_file_handle *pfds =
         wasm_runtime_malloc((uint32)(nsubscriptions * sizeof(*pfds)));
     if (pfds == NULL) {
         wasm_runtime_free(fos);
@@ -2171,9 +2214,16 @@ wasmtime_ssp_poll_oneoff(wasm_exec_env_t exec_env, struct fd_table *curfds,
                     fd_object_get_locked(&fos[i], ft, s->u.u.fd_readwrite.fd,
                                          __WASI_RIGHT_POLL_FD_READWRITE, 0);
                 if (error == 0) {
+
+                    // Temporary workaround (see PR#4377)
+                    os_file_handle tfd = fos[i]->file_handle;
                     // Proper file descriptor on which we can poll().
-                    pfds[i] = (struct pollfd){
-                        .fd = fos[i]->file_handle,
+                    pfds[i] = (os_poll_file_handle){
+#ifdef BH_PLATFORM_ZEPHYR
+                        .fd = tfd->fd,
+#else
+                        .fd = tfd,
+#endif
                         .events = s->u.type == __WASI_EVENTTYPE_FD_READ
                                       ? POLLIN
                                       : POLLOUT,
@@ -2182,7 +2232,7 @@ wasmtime_ssp_poll_oneoff(wasm_exec_env_t exec_env, struct fd_table *curfds,
                 else {
                     // Invalid file descriptor or rights missing.
                     fos[i] = NULL;
-                    pfds[i] = (struct pollfd){ .fd = -1 };
+                    pfds[i] = (os_poll_file_handle){ .fd = -1 };
                     out[(*nevents)++] = (__wasi_event_t){
                         .userdata = s->userdata,
                         .error = error,
@@ -2197,7 +2247,7 @@ wasmtime_ssp_poll_oneoff(wasm_exec_env_t exec_env, struct fd_table *curfds,
                            == 0) {
                     // Relative timeout.
                     fos[i] = NULL;
-                    pfds[i] = (struct pollfd){ .fd = -1 };
+                    pfds[i] = (os_poll_file_handle){ .fd = -1 };
                     clock_subscription = s;
                     break;
                 }
@@ -2205,7 +2255,7 @@ wasmtime_ssp_poll_oneoff(wasm_exec_env_t exec_env, struct fd_table *curfds,
             default:
                 // Unsupported event.
                 fos[i] = NULL;
-                pfds[i] = (struct pollfd){ .fd = -1 };
+                pfds[i] = (os_poll_file_handle){ .fd = -1 };
                 out[(*nevents)++] = (__wasi_event_t){
                     .userdata = s->userdata,
                     .error = __WASI_ENOSYS,
@@ -2249,7 +2299,7 @@ wasmtime_ssp_poll_oneoff(wasm_exec_env_t exec_env, struct fd_table *curfds,
                 __wasi_filesize_t nbytes = 0;
                 if (in[i].u.type == __WASI_EVENTTYPE_FD_READ) {
                     int l;
-                    if (ioctl(fos[i]->file_handle, FIONREAD, &l) == 0)
+                    if (os_ioctl(fos[i]->file_handle, FIONREAD, &l) == 0)
                         nbytes = (__wasi_filesize_t)l;
                 }
                 if ((pfds[i].revents & POLLNVAL) != 0) {
@@ -2415,7 +2465,7 @@ wasi_addr_to_string(const __wasi_addr_t *addr, char *buf, size_t buflen)
     if (addr->kind == IPv4) {
         const char *format = "%u.%u.%u.%u";
 
-        assert(buflen >= 16);
+        bh_assert(buflen >= 16);
 
         snprintf(buf, buflen, format, addr->addr.ip4.addr.n0,
                  addr->addr.ip4.addr.n1, addr->addr.ip4.addr.n2,
@@ -2427,14 +2477,13 @@ wasi_addr_to_string(const __wasi_addr_t *addr, char *buf, size_t buflen)
         const char *format = "%04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x";
         __wasi_addr_ip6_t ipv6 = addr->addr.ip6.addr;
 
-        assert(buflen >= 40);
+        bh_assert(buflen >= 40);
 
         snprintf(buf, buflen, format, ipv6.n0, ipv6.n1, ipv6.n2, ipv6.n3,
                  ipv6.h0, ipv6.h1, ipv6.h2, ipv6.h3);
 
         return true;
     }
-
     return false;
 }
 
@@ -2540,10 +2589,12 @@ wasi_ssp_sock_connect(wasm_exec_env_t exec_env, struct fd_table *curfds,
         return __WASI_EACCES;
     }
 
-    error = fd_object_get(curfds, &fo, fd, __WASI_RIGHT_SOCK_BIND, 0);
-    if (error != __WASI_ESUCCESS)
+    error = fd_object_get(curfds, &fo, fd, __WASI_RIGHT_SOCK_CONNECT, 0);
+    if (error != __WASI_ESUCCESS) {
         return error;
+    }
 
+    /* Consume __wasi_addr_t */
     ret = blocking_op_socket_connect(exec_env, fo->file_handle, buf,
                                      addr->kind == IPv4 ? addr->addr.ip4.port
                                                         : addr->addr.ip6.port);
@@ -2692,10 +2743,10 @@ wasi_ssp_sock_open(wasm_exec_env_t exec_env, struct fd_table *curfds,
     }
 
     if (SOCKET_DGRAM == socktype) {
-        assert(wasi_type == __WASI_FILETYPE_SOCKET_DGRAM);
+        bh_assert(wasi_type == __WASI_FILETYPE_SOCKET_DGRAM);
     }
     else {
-        assert(wasi_type == __WASI_FILETYPE_SOCKET_STREAM);
+        bh_assert(wasi_type == __WASI_FILETYPE_SOCKET_STREAM);
     }
 
     // TODO: base rights and inheriting rights ?
@@ -2805,7 +2856,7 @@ wasmtime_ssp_sock_recv_from(wasm_exec_env_t exec_env, struct fd_table *curfds,
 {
     struct fd_object *fo;
     __wasi_errno_t error;
-    bh_sockaddr_t sockaddr;
+    bh_sockaddr_t sockaddr, *sockaddr_ptr = NULL;
     int ret;
 
     error = fd_object_get(curfds, &fo, sock, __WASI_RIGHT_FD_READ, 0);
@@ -2813,14 +2864,26 @@ wasmtime_ssp_sock_recv_from(wasm_exec_env_t exec_env, struct fd_table *curfds,
         return error;
     }
 
+    // If the source address is not NULL, the caller is requesting the source
+    // address to be returned if the protocol supports it.  If the value is
+    // NULL, the POSIX standard states that the address is not returned.
+    if (src_addr != NULL) {
+        sockaddr_ptr = &sockaddr;
+    }
+
+    /* Consume bh_sockaddr_t instead of __wasi_addr_t */
     ret = blocking_op_socket_recv_from(exec_env, fo->file_handle, buf, buf_len,
-                                       0, &sockaddr);
+                                       0, sockaddr_ptr);
     fd_object_release(exec_env, fo);
     if (-1 == ret) {
         return convert_errno(errno);
     }
 
-    bh_sockaddr_to_wasi_addr(&sockaddr, src_addr);
+    // If the source address is not NULL, we need to convert the sockaddr
+    // back to __wasi_addr_t format.
+    if (src_addr != NULL) {
+        bh_sockaddr_to_wasi_addr(sockaddr_ptr, src_addr);
+    }
 
     *recv_len = (size_t)ret;
     return __WASI_ESUCCESS;
@@ -2878,6 +2941,7 @@ wasmtime_ssp_sock_send_to(wasm_exec_env_t exec_env, struct fd_table *curfds,
 
     wasi_addr_to_bh_sockaddr(dest_addr, &sockaddr);
 
+    /* Consume bh_sockaddr instead of __wasi_addr_t */
     ret = blocking_op_socket_send_to(exec_env, fo->file_handle, buf, buf_len, 0,
                                      &sockaddr);
     fd_object_release(exec_env, fo);
@@ -2909,8 +2973,10 @@ wasmtime_ssp_sock_shutdown(wasm_exec_env_t exec_env, struct fd_table *curfds,
 __wasi_errno_t
 wasmtime_ssp_sched_yield(void)
 {
-#ifdef BH_PLATFORM_WINDOWS
+#if defined(BH_PLATFORM_WINDOWS)
     SwitchToThread();
+#elif defined(BH_PLATFORM_ZEPHYR)
+    k_yield();
 #else
     if (sched_yield() < 0)
         return convert_errno(errno);
@@ -3000,9 +3066,9 @@ fd_table_destroy(struct fd_table *ft)
                 fd_object_release(NULL, ft->entries[i].object);
             }
         }
-        rwlock_destroy(&ft->lock);
         wasm_runtime_free(ft->entries);
     }
+    rwlock_destroy(&ft->lock);
 }
 
 void
@@ -3014,9 +3080,9 @@ fd_prestats_destroy(struct fd_prestats *pt)
                 wasm_runtime_free((void *)pt->prestats[i].dir);
             }
         }
-        rwlock_destroy(&pt->lock);
         wasm_runtime_free(pt->prestats);
     }
+    rwlock_destroy(&pt->lock);
 }
 
 bool
@@ -3043,7 +3109,6 @@ addr_pool_insert(struct addr_pool *addr_pool, const char *addr, uint8 mask)
     }
 
     next->next = NULL;
-    next->mask = mask;
 
     if (os_socket_inet_network(true, addr, &target) != BHT_OK) {
         // If parsing IPv4 fails, try IPv6
@@ -3054,10 +3119,20 @@ addr_pool_insert(struct addr_pool *addr_pool, const char *addr, uint8 mask)
         next->type = IPv6;
         bh_memcpy_s(next->addr.ip6, sizeof(next->addr.ip6), target.ipv6,
                     sizeof(target.ipv6));
+        if (mask > 128) {
+            wasm_runtime_free(next);
+            return false;
+        }
+        next->mask = mask;
     }
     else {
         next->type = IPv4;
         next->addr.ip4 = target.ipv4;
+        if (mask > 32) {
+            wasm_runtime_free(next);
+            return false;
+        }
+        next->mask = mask;
     }
 
     /* attach with */
@@ -3109,7 +3184,7 @@ compare_address(const struct addr_pool *addr_pool_entry,
         }
         addr_size = 16;
     }
-    max_addr_mask = addr_size * 8;
+    max_addr_mask = (uint8)(addr_size * 8);
 
     /* IPv4 0.0.0.0 or IPv6 :: means any address */
     if (basebuf[0] == 0 && !memcmp(basebuf, basebuf + 1, addr_size - 1)) {

@@ -53,7 +53,7 @@ convert_sgx_errno(int error)
              * continue (only used when no EXXX is returned)  */
             case SGX_ERROR_FILE_CANT_WRITE_RECOVERY_FILE:
                 return EIO;
-            /* When openeing the file, recovery is needed, but the recovery
+            /* When opening the file, recovery is needed, but the recovery
              * process failed */
             case SGX_ERROR_FILE_RECOVERY_NEEDED:
                 return EIO;
@@ -350,7 +350,7 @@ ipfs_fopen(int fd, int flags)
         errno = __WASI_ECANCELED;
         sgx_fclose(sgx_file);
         os_printf("An error occurred while inserting the IPFS file pointer in "
-                  "the map.");
+                  "the map.\n");
         return NULL;
     }
 

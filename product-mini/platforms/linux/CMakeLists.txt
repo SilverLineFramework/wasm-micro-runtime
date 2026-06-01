@@ -7,6 +7,8 @@ include(CheckPIESupported)
 
 project (iwasm LANGUAGES C ASM)
 
+option(BUILD_SHARED_LIBS "Build using shared libraries" OFF)
+
 set (CMAKE_VERBOSE_MAKEFILE OFF)
 
 set (WAMR_BUILD_PLATFORM "linux")
@@ -108,8 +110,8 @@ if (NOT DEFINED WAMR_BUILD_SIMD)
 endif ()
 
 if (NOT DEFINED WAMR_BUILD_REF_TYPES)
-  # Disable reference types by default
-  set (WAMR_BUILD_REF_TYPES 0)
+  # Enable reference types by default
+  set (WAMR_BUILD_REF_TYPES 1)
 endif ()
 
 if (NOT DEFINED WAMR_BUILD_DEBUG_INTERP)
@@ -123,28 +125,19 @@ if (WAMR_BUILD_DEBUG_INTERP EQUAL 1)
   set (WAMR_BUILD_SIMD 0)
 endif ()
 
+# if enable wasi-nn, both wasi-nn-backends and iwasm
+# need to use same WAMR (dynamic) libraries
+if (WAMR_BUILD_WASI_NN EQUAL 1)
+  set (BUILD_SHARED_LIBS ON)
+endif ()
+
 set (WAMR_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../..)
 
 include (${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 
 check_pie_supported()
-add_library(vmlib ${WAMR_RUNTIME_LIB_SOURCE})
-set_target_properties (vmlib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
-
-set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wformat -Wformat-security -Wshadow")
-# set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wconversion -Wsign-conversion")
-
-set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wformat -Wformat-security -Wno-unused")
-
-if (WAMR_BUILD_TARGET MATCHES "X86_.*" OR WAMR_BUILD_TARGET STREQUAL "AMD_64")
-  if (NOT (CMAKE_C_COMPILER MATCHES ".*clang.*" OR CMAKE_C_COMPILER_ID MATCHES ".*Clang"))
-    set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mindirect-branch-register")
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mindirect-branch-register")
-    # UNDEFINED BEHAVIOR, refer to https://en.cppreference.com/w/cpp/language/ub
-  endif ()
-endif ()
 
 # The following flags are to enhance security, but it may impact performance,
 # we disable them by default.
@@ -158,16 +151,40 @@ include (${SHARED_DIR}/utils/uncommon/shared_uncommon.cmake)
 
 add_executable (iwasm main.c ${UNCOMMON_SHARED_SOURCE})
 
+set_version_info (iwasm)
+
 set_target_properties (iwasm PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+target_link_libraries(iwasm vmlib)
 
 install (TARGETS iwasm DESTINATION bin)
 
-target_link_libraries (iwasm vmlib ${LLVM_AVAILABLE_LIBS} ${UV_A_LIBS} ${WASI_NN_LIBS} -lm -ldl -lpthread)
+add_library (vmlib ${WAMR_RUNTIME_LIB_SOURCE})
 
-add_library (libiwasm SHARED ${WAMR_RUNTIME_LIB_SOURCE})
+set_version_info (vmlib)
 
-install (TARGETS libiwasm DESTINATION lib)
+target_include_directories(vmlib INTERFACE
+  $<INSTALL_INTERFACE:include>
+)
 
-set_target_properties (libiwasm PROPERTIES OUTPUT_NAME iwasm)
+set (WAMR_PUBLIC_HEADERS
+  ${WAMR_ROOT_DIR}/core/iwasm/include/wasm_c_api.h
+  ${WAMR_ROOT_DIR}/core/iwasm/include/wasm_export.h
+  ${WAMR_ROOT_DIR}/core/iwasm/include/lib_export.h
+)
 
-target_link_libraries (libiwasm ${LLVM_AVAILABLE_LIBS} ${UV_A_LIBS} ${WASI_NN_LIBS} -lm -ldl -lpthread)
+set_target_properties (vmlib PROPERTIES
+  OUTPUT_NAME iwasm
+  PUBLIC_HEADER "${WAMR_PUBLIC_HEADERS}"
+  POSITION_INDEPENDENT_CODE ON
+)
+
+target_link_libraries (vmlib ${LLVM_AVAILABLE_LIBS} ${UV_A_LIBS} -lm -ldl -lpthread)
+
+install (TARGETS vmlib
+  EXPORT iwasmTargets
+  DESTINATION lib
+  PUBLIC_HEADER DESTINATION include
+)
+
+install_iwasm_package ()

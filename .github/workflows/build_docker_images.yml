@@ -15,13 +15,18 @@ on:
         type: string
         required: true
 
+permissions:
+  contents: read
+
 jobs:
   build-and-push-images:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write # for uploading release artifacts
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
 
       - name: Build and save Docker image(wasm-debug-server:${{ inputs.ver_num }}) to tar file
         run: |

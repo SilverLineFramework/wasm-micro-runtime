@@ -195,6 +195,15 @@ aot_gen_commit_values(AOTCompFrame *frame);
 bool
 aot_gen_commit_sp_ip(AOTCompFrame *frame, bool commit_sp, bool commit_ip);
 
+/**
+ * Generate instructions to commit IP pointer to the frame.
+ *
+ * @param frame the frame information
+ */
+bool
+aot_gen_commit_ip(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+                  LLVMValueRef ip_value, bool is_64bit);
+
 bool
 aot_frame_store_value(AOTCompContext *comp_ctx, LLVMValueRef value,
                       uint8 value_type, LLVMValueRef cur_frame, uint32 offset);
@@ -519,6 +528,19 @@ set_local_gc_ref(AOTCompFrame *frame, int n, LLVMValueRef value, uint8 ref_type)
         wasm_runtime_free(aot_value);                                        \
     } while (0)
 
+#if WASM_ENABLE_MEMORY64 != 0
+#define IS_MEMORY64 (comp_ctx->comp_data->memories[0].flags & MEMORY64_FLAG)
+#define MEMORY64_COND_VALUE(VAL_IF_ENABLED, VAL_IF_DISABLED) \
+    (IS_MEMORY64 ? VAL_IF_ENABLED : VAL_IF_DISABLED)
+#define IS_TABLE64(i) \
+    (comp_ctx->comp_data->tables[i].table_type.flags & TABLE64_FLAG)
+#define TABLE64_COND_VALUE(i, VAL_IF_ENABLED, VAL_IF_DISABLED) \
+    (IS_TABLE64(i) ? VAL_IF_ENABLED : VAL_IF_DISABLED)
+#else
+#define MEMORY64_COND_VALUE(VAL_IF_ENABLED, VAL_IF_DISABLED) (VAL_IF_DISABLED)
+#define TABLE64_COND_VALUE(i, VAL_IF_ENABLED, VAL_IF_DISABLED) (VAL_IF_DISABLED)
+#endif
+
 #define POP_I32(v) POP(v, VALUE_TYPE_I32)
 #define POP_I64(v) POP(v, VALUE_TYPE_I64)
 #define POP_F32(v) POP(v, VALUE_TYPE_F32)
@@ -527,6 +549,13 @@ set_local_gc_ref(AOTCompFrame *frame, int n, LLVMValueRef value, uint8 ref_type)
 #define POP_FUNCREF(v) POP(v, VALUE_TYPE_FUNCREF)
 #define POP_EXTERNREF(v) POP(v, VALUE_TYPE_EXTERNREF)
 #define POP_GC_REF(v) POP(v, VALUE_TYPE_GC_REF)
+#define POP_MEM_OFFSET(v) \
+    POP(v, MEMORY64_COND_VALUE(VALUE_TYPE_I64, VALUE_TYPE_I32))
+#define POP_PAGE_COUNT(v) \
+    POP(v, MEMORY64_COND_VALUE(VALUE_TYPE_I64, VALUE_TYPE_I32))
+#define POP_TBL_ELEM_IDX(v) \
+    POP(v, TABLE64_COND_VALUE(tbl_idx, VALUE_TYPE_I64, VALUE_TYPE_I32))
+#define POP_TBL_ELEM_LEN(v) POP_TBL_ELEM_IDX(v)
 
 #define POP_COND(llvm_value)                                                   \
     do {                                                                       \
@@ -590,6 +619,19 @@ set_local_gc_ref(AOTCompFrame *frame, int n, LLVMValueRef value, uint8 ref_type)
 #define PUSH_FUNCREF(v) PUSH(v, VALUE_TYPE_FUNCREF)
 #define PUSH_EXTERNREF(v) PUSH(v, VALUE_TYPE_EXTERNREF)
 #define PUSH_GC_REF(v) PUSH(v, VALUE_TYPE_GC_REF)
+#define PUSH_PAGE_COUNT(v) \
+    PUSH(v, MEMORY64_COND_VALUE(VALUE_TYPE_I64, VALUE_TYPE_I32))
+#define PUSH_TBL_ELEM_IDX(v) \
+    PUSH(v, TABLE64_COND_VALUE(tbl_idx, VALUE_TYPE_I64, VALUE_TYPE_I32))
+#define PUSH_TBL_ELEM_LEN(v) PUSH_TBL_ELEM_IDX(v)
+
+#define SET_CONST(v)                                                          \
+    do {                                                                      \
+        AOTValue *aot_value =                                                 \
+            func_ctx->block_stack.block_list_end->value_stack.value_list_end; \
+        aot_value->is_const = true;                                           \
+        aot_value->const_value = (v);                                         \
+    } while (0)
 
 #define TO_LLVM_TYPE(wasm_type) \
     wasm_type_to_llvm_type(comp_ctx, &comp_ctx->basic_types, wasm_type)
@@ -603,6 +645,7 @@ set_local_gc_ref(AOTCompFrame *frame, int n, LLVMValueRef value, uint8 ref_type)
 #define INT8_TYPE comp_ctx->basic_types.int8_type
 #define INT16_TYPE comp_ctx->basic_types.int16_type
 #define INTPTR_T_TYPE comp_ctx->basic_types.intptr_t_type
+#define SIZE_T_TYPE comp_ctx->basic_types.size_t_type
 #define MD_TYPE comp_ctx->basic_types.meta_data_type
 #define INT8_PTR_TYPE comp_ctx->basic_types.int8_ptr_type
 #define INT16_PTR_TYPE comp_ctx->basic_types.int16_ptr_type
@@ -625,9 +668,18 @@ set_local_gc_ref(AOTCompFrame *frame, int n, LLVMValueRef value, uint8 ref_type)
 
 #define I32_CONST(v) LLVMConstInt(I32_TYPE, v, true)
 #define I64_CONST(v) LLVMConstInt(I64_TYPE, v, true)
-#define F32_CONST(v) LLVMConstReal(F32_TYPE, v)
+#define F32_CONST(v) LLVMConstReal(F32_TYPE, (double)(v))
 #define F64_CONST(v) LLVMConstReal(F64_TYPE, v)
 #define I8_CONST(v) LLVMConstInt(INT8_TYPE, v, true)
+
+#define INT_CONST(variable, value, type, is_signed)        \
+    do {                                                   \
+        variable = LLVMConstInt(type, value, is_signed);   \
+        if (!variable) {                                   \
+            aot_set_last_error("llvm build const failed"); \
+            return false;                                  \
+        }                                                  \
+    } while (0)
 
 #define LLVM_CONST(name) (comp_ctx->llvm_consts.name)
 #define I1_ZERO LLVM_CONST(i1_zero)
@@ -738,7 +790,7 @@ set_local_gc_ref(AOTCompFrame *frame, int n, LLVMValueRef value, uint8 ref_type)
         }                                                                   \
         else {                                                              \
             char *func_name = #name;                                        \
-            /* AOT mode, delcare the function */                            \
+            /* AOT mode, declare the function */                            \
             if (!(func = LLVMGetNamedFunction(func_ctx->module, func_name)) \
                 && !(func = LLVMAddFunction(func_ctx->module, func_name,    \
                                             func_type))) {                  \
@@ -766,14 +818,6 @@ aot_compile_wasm(AOTCompContext *comp_ctx);
 
 bool
 aot_emit_llvm_file(AOTCompContext *comp_ctx, const char *file_name);
-
-bool
-aot_emit_aot_file(AOTCompContext *comp_ctx, AOTCompData *comp_data,
-                  const char *file_name);
-
-uint8 *
-aot_emit_aot_file_buf(AOTCompContext *comp_ctx, AOTCompData *comp_data,
-                      uint32 *p_aot_file_size);
 
 bool
 aot_emit_object_file(AOTCompContext *comp_ctx, char *file_name);

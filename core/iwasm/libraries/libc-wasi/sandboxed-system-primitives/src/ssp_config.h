@@ -18,7 +18,7 @@
 #include "gnuc.h"
 
 #if defined(__FreeBSD__) || defined(__APPLE__) \
-    || (defined(ANDROID) && __ANDROID_API__ < 28)
+    || ((defined(ANDROID) || defined(__ANDROID__)) && (__ANDROID_API__ < 28))
 #define CONFIG_HAS_ARC4RANDOM_BUF 1
 #else
 #define CONFIG_HAS_ARC4RANDOM_BUF 0
@@ -26,15 +26,24 @@
 
 // On Linux, prefer to use getrandom, though it isn't available in
 // GLIBC before 2.25.
-#if (defined(__linux__) || defined(ESP_PLATFORM) || defined(__COSMOPOLITAN__)) \
-    && (!defined(__GLIBC__) || __GLIBC__ > 2                                   \
-        || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 25))
+//
+// NuttX has arc4random_buf, getrandom, and /dev/urandom.
+// We prefer getrandom here because it has the best chance to be usable.
+// - Our /dev/urandom usage (keep the open descriptor in a global variable)
+//   is not compatible with NuttX flat memory model.
+// - arc4random_buf is only available with CONFIG_CRYPTO_RANDOM_POOL=y.
+#if defined(__NuttX__)                               \
+    || ((defined(__linux__) || defined(ESP_PLATFORM) \
+         || defined(__COSMOPOLITAN__))               \
+        && (!defined(__GLIBC__) || __GLIBC__ > 2     \
+            || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 25)))
 #define CONFIG_HAS_GETRANDOM 1
 #else
 #define CONFIG_HAS_GETRANDOM 0
 #endif
 
-#if defined(__CloudABI__) || defined(BH_PLATFORM_FREERTOS)
+#if defined(__CloudABI__) || defined(BH_PLATFORM_FREERTOS) \
+    || defined(BH_PLATFORM_ZEPHYR)
 #define CONFIG_HAS_CAP_ENTER 1
 #else
 #define CONFIG_HAS_CAP_ENTER 0
@@ -42,7 +51,7 @@
 
 #if !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(__EMSCRIPTEN__) \
     && !defined(ESP_PLATFORM) && !defined(DISABLE_CLOCK_NANOSLEEP)           \
-    && !defined(BH_PLATFORM_FREERTOS)
+    && !defined(BH_PLATFORM_FREERTOS) && !defined(BH_PLATFORM_ZEPHYR)
 #define CONFIG_HAS_CLOCK_NANOSLEEP 1
 #else
 #define CONFIG_HAS_CLOCK_NANOSLEEP 0
@@ -55,16 +64,19 @@
 #endif
 
 #if !defined(__APPLE__) && !defined(BH_PLATFORM_LINUX_SGX) && !defined(_WIN32) \
-    && !defined(__COSMOPOLITAN__) && !defined(BH_PLATFORM_FREERTOS)
+    && !defined(__COSMOPOLITAN__) && !defined(BH_PLATFORM_FREERTOS)            \
+    && !defined(BH_PLATFORM_ZEPHYR)
 #define CONFIG_HAS_PTHREAD_CONDATTR_SETCLOCK 1
 #else
 #define CONFIG_HAS_PTHREAD_CONDATTR_SETCLOCK 0
 #endif
 
 #if !defined(BH_PLATFORM_LINUX_SGX)
+
 /* Clang's __GNUC_PREREQ macro has a different meaning than GCC one,
 so we have to handle this case specially */
 #if defined(__clang__)
+
 /* Clang provides stdatomic.h since 3.6.0
 See https://releases.llvm.org/3.6.0/tools/clang/docs/ReleaseNotes.html */
 #if __clang_major__ > 3 || (__clang_major__ == 3 && __clang_minor__ >= 6)
@@ -72,7 +84,9 @@ See https://releases.llvm.org/3.6.0/tools/clang/docs/ReleaseNotes.html */
 #else
 #define CONFIG_HAS_STD_ATOMIC 0
 #endif
+
 #elif defined(__GNUC_PREREQ)
+
 /* Even though older versions of GCC support C11, atomics were
 not implemented until 4.9. See
 https://gcc.gnu.org/bugzilla/show_bug.cgi?id=58016 */
@@ -81,11 +95,21 @@ https://gcc.gnu.org/bugzilla/show_bug.cgi?id=58016 */
 #else /* else of __GNUC_PREREQ(4, 9) */
 #define CONFIG_HAS_STD_ATOMIC 0
 #endif /* end of __GNUC_PREREQ(4, 9) */
-#else  /* else of defined(__GNUC_PREREQ) */
-#define CONFIG_HAS_STD_ATOMIC 1
-#endif /* end of defined(__GNUC_PREREQ) */
-#else  /* else of !defined(BH_PLATFORM_LINUX_SGX) */
+
+#elif defined(_MSC_VER)
+
 #define CONFIG_HAS_STD_ATOMIC 0
+
+#else
+
+#define CONFIG_HAS_STD_ATOMIC 1
+
+#endif /* end of defined(__clang__) */
+
+#else /* else of !defined(BH_PLATFORM_LINUX_SGX) */
+
+#define CONFIG_HAS_STD_ATOMIC 0
+
 #endif /* end of !defined(BH_PLATFORM_LINUX_SGX) */
 
-#endif
+#endif /* end of SSP_CONFIG_H */

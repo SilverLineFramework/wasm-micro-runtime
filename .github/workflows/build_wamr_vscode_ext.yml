@@ -14,16 +14,22 @@ on:
         type: string
         required: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
+    permissions:
+      contents: write # for uploading release artifacts
 
-      - name: Use Node.js 16.x
-        uses: actions/setup-node@v3
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Use Node.js 18.x
+        uses: actions/setup-node@v6
         with:
-          node-version: 16.x
+          node-version: 18.x
 
       - name: set vscode extension to correct version
         run: |
@@ -33,7 +39,7 @@ jobs:
 
       - name: generate wamr ide vscode extension
         run: |
-          npm install -g vsce
+          npm install -g @vscode/vsce
           rm -rf node_modules
           npm install
           vsce package

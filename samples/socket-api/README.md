@@ -1,3 +1,6 @@
+---
+description: "The related code/working directory of this example resides in directory {WAMR_DIR}/samples/socket-api"
+---
 # "socket-api" sample introduction
 
 This sample demonstrates how to use WAMR socket-api to develop wasm network applications.
@@ -54,7 +57,7 @@ The output of client is like:
 [Client] Connect socket
 [Client] Client receive
 [Client] 115 bytes received:
-Buffer recieved:
+Buffer received:
 Say Hi from the Server
 Say Hi from the Server
 Say Hi from the Server
@@ -79,7 +82,7 @@ Client is running...
 Start receiving.
 Start sending.
 Send 106 bytes successfully!
-Receive 106 bytes successlly!
+Receive 106 bytes successfully!
 Data:
   The stars shine down
   It brings us light
@@ -117,7 +120,7 @@ The output is:
 ```bash
 Wait for client to connect
 Client connected, sleeping for 10s
-Shuting down
+Shutting down
 ```
 
 ```bash
@@ -195,7 +198,7 @@ The output of client is like:
 [Client] Create socket
 [Client] Client send
 [Client] Client receive
-[Client] Buffer recieved: Hello from server
+[Client] Buffer received: Hello from server
 [Client] BYE
 ```
 

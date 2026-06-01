@@ -26,7 +26,7 @@
  * (platform_internal.h)
  */
 #if !defined(CONFIG_HAS_D_INO)
-#if !defined(__NuttX__)
+#if !defined(__NuttX__) && !defined(__RTTHREAD__)
 #define CONFIG_HAS_D_INO 1
 #define CONFIG_HAS_ISATTY 1
 #else
@@ -52,6 +52,18 @@
 
 #if defined(O_SYNC)
 #define CONFIG_HAS_O_SYNC
+#endif
+
+#ifndef STDIN_FILENO
+#define STDIN_FILENO 0
+#endif
+
+#ifndef STDOUT_FILENO
+#define STDOUT_FILENO 1
+#endif
+
+#ifndef STDERR_FILENO
+#define STDERR_FILENO 2
 #endif
 
 // Converts a POSIX timespec to a WASI timestamp.
@@ -823,7 +835,7 @@ os_fadvise(os_file_handle handle, __wasi_filesize_t offset,
 
     int ret = posix_fadvise(handle, (off_t)offset, (off_t)length, nadvice);
 
-    if (ret < 0)
+    if (ret != 0)
         return convert_errno(ret);
 
     return __WASI_ESUCCESS;
@@ -858,30 +870,39 @@ os_isatty(os_file_handle handle)
 #endif
 }
 
+bool
+os_is_stdin_handle(os_file_handle fd)
+{
+    return fd == STDIN_FILENO;
+}
+
+bool
+os_is_stdout_handle(os_file_handle fd)
+{
+    return fd == STDOUT_FILENO;
+}
+
+bool
+os_is_stderr_handle(os_file_handle fd)
+{
+    return fd == STDERR_FILENO;
+}
+
 os_file_handle
 os_convert_stdin_handle(os_raw_file_handle raw_stdin)
 {
-#ifndef STDIN_FILENO
-#define STDIN_FILENO 0
-#endif
     return raw_stdin >= 0 ? raw_stdin : STDIN_FILENO;
 }
 
 os_file_handle
 os_convert_stdout_handle(os_raw_file_handle raw_stdout)
 {
-#ifndef STDOUT_FILENO
-#define STDOUT_FILENO 1
-#endif
     return raw_stdout >= 0 ? raw_stdout : STDOUT_FILENO;
 }
 
 os_file_handle
 os_convert_stderr_handle(os_raw_file_handle raw_stderr)
 {
-#ifndef STDERR_FILENO
-#define STDERR_FILENO 2
-#endif
     return raw_stderr >= 0 ? raw_stderr : STDERR_FILENO;
 }
 
@@ -920,7 +941,12 @@ os_readdir(os_dir_stream dir_stream, __wasi_dirent_t *entry,
 
     if (dent == NULL) {
         *d_name = NULL;
-        return convert_errno(errno);
+        if (errno != 0) {
+            return convert_errno(errno);
+        }
+        else {
+            return 0;
+        }
     }
 
     long offset = (__wasi_dircookie_t)telldir(dir_stream);
@@ -1006,4 +1032,38 @@ char *
 os_realpath(const char *path, char *resolved_path)
 {
     return realpath(path, resolved_path);
+}
+
+os_raw_file_handle
+os_invalid_raw_handle(void)
+{
+    return -1;
+}
+
+// Better to define the function here, as Linux-SGX will
+// use this file to implement the `_os` functions.
+// So we don't need to define them in the Linux-SGX platform.
+int
+os_ioctl(os_file_handle handle, int request, ...)
+{
+    int ret = -1;
+    va_list args;
+
+    va_start(args, request);
+    ret = ioctl(handle, request, args);
+    va_end(args);
+
+    return ret;
+}
+
+int
+os_poll(os_poll_file_handle *fds, os_nfds_t nfs, int timeout)
+{
+    return poll(fds, nfs, timeout);
+}
+
+bool
+os_compare_file_handle(os_file_handle handle1, os_file_handle handle2)
+{
+    return handle1 == handle2;
 }

@@ -3,8 +3,6 @@
 
 cmake_minimum_required (VERSION 3.21)
 
-set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mfloat-abi=hard")
-
 project (iwasm)
 
 set (WAMR_BUILD_PLATFORM "darwin")
@@ -115,15 +113,6 @@ include (${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 
 set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections -pie -fPIE")
 
-set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wformat -Wformat-security")
-# set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wconversion -Wsign-conversion")
-
-if (WAMR_BUILD_TARGET MATCHES "X86_.*" OR WAMR_BUILD_TARGET STREQUAL "AMD_64")
-  if (NOT (CMAKE_C_COMPILER MATCHES ".*clang.*" OR CMAKE_C_COMPILER_ID MATCHES ".*Clang"))
-    set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mindirect-branch-register")
-  endif ()
-endif ()
-
 # The following flags are to enhance security, but it may impact performance,
 # we disable them by default.
 #if (WAMR_BUILD_TARGET MATCHES "X86_.*" OR WAMR_BUILD_TARGET STREQUAL "AMD_64")
@@ -141,6 +130,7 @@ endif()
 
 set (distribution_DIR ${CMAKE_BINARY_DIR}/distribution)
 set_target_properties (iwasm PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${distribution_DIR}/wasm/lib")
+set_version_info (iwasm)
 
 add_custom_command (TARGET iwasm POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E copy_directory "${WAMR_ROOT_DIR}/core/iwasm/include" "${distribution_DIR}/wasm/include/"

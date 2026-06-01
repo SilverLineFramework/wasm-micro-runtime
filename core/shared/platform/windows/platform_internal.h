@@ -6,6 +6,12 @@
 #ifndef _PLATFORM_INTERNAL_H
 #define _PLATFORM_INTERNAL_H
 
+/*
+ * Suppress the noisy warnings:
+ * winbase.h: warning C5105: macro expansion producing 'defined' has
+ * undefined behavior
+ */
+#pragma warning(disable : 5105)
 #include <inttypes.h>
 #include <stdbool.h>
 #include <assert.h>
@@ -168,16 +174,23 @@ typedef struct windows_dir_stream {
     windows_handle *handle;
 } windows_dir_stream;
 
-typedef windows_handle *os_file_handle;
 typedef windows_dir_stream *os_dir_stream;
 
-#if WASM_ENABLE_UVWASI != 1
+#if WASM_ENABLE_UVWASI == 0
+typedef windows_handle *os_file_handle;
 typedef HANDLE os_raw_file_handle;
 #else
+typedef uint32_t os_file_handle;
 typedef uint32_t os_raw_file_handle;
 #endif
 
 #define bh_socket_t windows_handle *
+
+/* The below types are used in platform_api_extension.h,
+   we just define them to make the compiler happy */
+typedef int os_poll_file_handle;
+typedef unsigned int os_nfds_t;
+typedef struct timespec os_timespec;
 
 // UWP apps do not have stdout/stderr handles so provide a default
 // implementation of vprintf on debug builds so output from WASI libc is sent to
@@ -188,9 +201,13 @@ typedef uint32_t os_raw_file_handle;
 #endif
 
 static inline os_file_handle
-os_get_invalid_handle()
+os_get_invalid_handle(void)
 {
+#if WASM_ENABLE_UVWASI == 0
     return NULL;
+#else
+    return -1;
+#endif
 }
 
 #ifdef __cplusplus

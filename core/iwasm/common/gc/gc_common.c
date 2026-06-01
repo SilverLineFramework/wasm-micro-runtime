@@ -176,12 +176,6 @@ wasm_defined_type_is_array_type(WASMType *const def_type)
     return wasm_type_is_array_type(def_type);
 }
 
-uint32
-wasm_func_type_get_param_count(WASMFuncType *const func_type)
-{
-    return func_type->param_count;
-}
-
 wasm_ref_type_t
 wasm_func_type_get_param_type(WASMFuncType *const func_type, uint32 param_idx)
 {
@@ -200,12 +194,6 @@ wasm_func_type_get_param_type(WASMFuncType *const func_type, uint32 param_idx)
     }
 
     return ref_type;
-}
-
-uint32
-wasm_func_type_get_result_count(WASMFuncType *const func_type)
-{
-    return (uint32)func_type->result_count;
 }
 
 wasm_ref_type_t
@@ -304,7 +292,12 @@ wasm_defined_type_equal(WASMType *const def_type1, WASMType *const def_type2,
     }
 #endif
 #if WASM_ENABLE_AOT != 0
-    /* TODO */
+    if (module->module_type == Wasm_Module_AoT) {
+        AOTModule *aot_module = (AOTModule *)module;
+
+        types = aot_module->types;
+        type_count = aot_module->type_count;
+    }
 #endif
 
     bh_assert(types);
@@ -359,7 +352,15 @@ wasm_ref_type_set_heap_type(wasm_ref_type_t *ref_type, bool nullable,
 {
     bool ret;
 
-    bh_assert(heap_type <= HEAP_TYPE_FUNC && heap_type >= HEAP_TYPE_NONE);
+    bh_assert((heap_type >= HEAP_TYPE_ARRAY && heap_type <= HEAP_TYPE_NOFUNC)
+#if WASM_ENABLE_STRINGREF != 0
+              || heap_type == HEAP_TYPE_STRINGREF
+              || heap_type == HEAP_TYPE_STRINGVIEWWTF8
+              || heap_type == HEAP_TYPE_STRINGVIEWWTF16
+              || heap_type == HEAP_TYPE_STRINGVIEWITER
+#endif
+    );
+
     ref_type->value_type =
         nullable ? VALUE_TYPE_HT_NULLABLE_REF : VALUE_TYPE_HT_NON_NULLABLE_REF;
     ref_type->nullable = nullable;

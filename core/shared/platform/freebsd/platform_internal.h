@@ -69,6 +69,9 @@ typedef sem_t korp_sem;
 typedef int os_file_handle;
 typedef DIR *os_dir_stream;
 typedef int os_raw_file_handle;
+typedef struct pollfd os_poll_file_handle;
+typedef nfds_t os_nfds_t;
+typedef struct timespec os_timespec;
 
 #if WASM_DISABLE_HW_BOUND_CHECK == 0
 #if defined(BUILD_TARGET_X86_64) || defined(BUILD_TARGET_AMD_64)            \
@@ -115,7 +118,7 @@ os_set_signal_number_for_blocking_op(int signo);
 typedef int os_file_handle;
 
 static inline os_file_handle
-os_get_invalid_handle()
+os_get_invalid_handle(void)
 {
     return -1;
 }

@@ -41,6 +41,9 @@
 #include <llvm/Target/CodeGenCWrappers.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
+#if LLVM_VERSION_MAJOR >= 17
+#include <llvm/TargetParser/Triple.h>
+#endif
 #include <llvm/Transforms/Utils/LowerMemIntrinsics.h>
 #include <llvm/Transforms/Vectorize/LoopVectorize.h>
 #include <llvm/Transforms/Vectorize/LoadStoreVectorizer.h>
@@ -75,12 +78,6 @@ LLVM_C_EXTERN_C_BEGIN
 
 bool
 aot_check_simd_compatibility(const char *arch_c_str, const char *cpu_c_str);
-
-void
-aot_add_expand_memory_op_pass(LLVMPassManagerRef pass);
-
-void
-aot_add_simple_loop_unswitch_pass(LLVMPassManagerRef pass);
 
 void
 aot_apply_llvm_new_pass_manager(AOTCompContext *comp_ctx, LLVMModuleRef module);
@@ -179,6 +176,9 @@ aot_check_simd_compatibility(const char *arch_c_str, const char *cpu_c_str)
     else if (targetArch == llvm::Triple::aarch64) {
         return subTargetInfo->checkFeatures("+neon");
     }
+    else if (targetArch == llvm::Triple::arc) {
+        return true;
+    }
     else {
         return false;
     }
@@ -212,18 +212,23 @@ aot_apply_llvm_new_pass_manager(AOTCompContext *comp_ctx, LLVMModuleRef module)
         cl::ParseCommandLineOptions(2, argv);
 #if LLVM_VERSION_MAJOR < 17
         PGO = PGOOptions("", "", "", PGOOptions::IRInstr);
-#else
+#elif LLVM_VERSION_MAJOR < 22
         auto FS = vfs::getRealFileSystem();
         PGO = PGOOptions("", "", "", "", FS, PGOOptions::IRInstr);
+#else
+        PGO = PGOOptions("", "", "", "", PGOOptions::IRInstr);
 #endif
     }
     else if (comp_ctx->use_prof_file) {
 #if LLVM_VERSION_MAJOR < 17
         PGO = PGOOptions(comp_ctx->use_prof_file, "", "", PGOOptions::IRUse);
-#else
+#elif LLVM_VERSION_MAJOR < 22
         auto FS = vfs::getRealFileSystem();
         PGO = PGOOptions(comp_ctx->use_prof_file, "", "", "", FS,
                          PGOOptions::IRUse);
+#else
+        PGO =
+            PGOOptions(comp_ctx->use_prof_file, "", "", "", PGOOptions::IRUse);
 #endif
     }
 
@@ -318,10 +323,15 @@ aot_apply_llvm_new_pass_manager(AOTCompContext *comp_ctx, LLVMModuleRef module)
     ModulePassManager MPM;
 
     if (comp_ctx->is_jit_mode) {
+#if LLVM_VERSION_MAJOR >= 18
+#define INSTCOMBINE "instcombine<no-verify-fixpoint>"
+#else
+#define INSTCOMBINE "instcombine"
+#endif
         const char *Passes =
             "loop-vectorize,slp-vectorizer,"
             "load-store-vectorizer,vector-combine,"
-            "mem2reg,instcombine,simplifycfg,jump-threading,indvars";
+            "mem2reg," INSTCOMBINE ",simplifycfg,jump-threading,indvars";
         ExitOnErr(PB.parsePassPipeline(MPM, Passes));
     }
     else {
@@ -417,7 +427,7 @@ aot_compress_aot_func_names(AOTCompContext *comp_ctx, uint32 *p_size)
         return NULL;
     }
 
-    compressed_str_len = Result.size();
+    compressed_str_len = (uint32)Result.size();
     if (!(compressed_str = (char *)wasm_runtime_malloc(compressed_str_len))) {
         aot_set_last_error("allocate memory failed");
         return NULL;

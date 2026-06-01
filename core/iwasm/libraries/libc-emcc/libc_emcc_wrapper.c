@@ -7,8 +7,13 @@
 #include "bh_log.h"
 #include "wasm_export.h"
 #include "../interpreter/wasm.h"
-#if !defined(_DEFAULT_SOURCE) && !defined(BH_PLATFORM_LINUX_SGX)
-#include "sys/syscall.h"
+
+#if defined(__linux__)
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 17, 0)
+#define HAVE_SYSCALL_GETRANDOM
+#include <sys/syscall.h>
+#endif
 #endif
 
 /* clang-format off */
@@ -168,12 +173,21 @@ statbuf_native2app(const struct stat *statbuf_native,
     statbuf_app->st_blksize = (unsigned)statbuf_native->st_blksize;
     statbuf_app->st_blocks = (unsigned)statbuf_native->st_blocks;
     statbuf_app->st_ino = (int64)statbuf_native->st_ino;
+#if defined(__APPLE__)
+    statbuf_app->st_atim.tv_sec = (int)statbuf_native->st_atimespec.tv_sec;
+    statbuf_app->st_atim.tv_nsec = (int)statbuf_native->st_atimespec.tv_nsec;
+    statbuf_app->st_mtim.tv_sec = (int)statbuf_native->st_mtimespec.tv_sec;
+    statbuf_app->st_mtim.tv_nsec = (int)statbuf_native->st_mtimespec.tv_nsec;
+    statbuf_app->st_ctim.tv_sec = (int)statbuf_native->st_ctimespec.tv_sec;
+    statbuf_app->st_ctim.tv_nsec = (int)statbuf_native->st_ctimespec.tv_nsec;
+#else
     statbuf_app->st_atim.tv_sec = (int)statbuf_native->st_atim.tv_sec;
     statbuf_app->st_atim.tv_nsec = (int)statbuf_native->st_atim.tv_nsec;
     statbuf_app->st_mtim.tv_sec = (int)statbuf_native->st_mtim.tv_sec;
     statbuf_app->st_mtim.tv_nsec = (int)statbuf_native->st_mtim.tv_nsec;
     statbuf_app->st_ctim.tv_sec = (int)statbuf_native->st_ctim.tv_sec;
     statbuf_app->st_ctim.tv_nsec = (int)statbuf_native->st_ctim.tv_nsec;
+#endif
 }
 
 static int
@@ -231,14 +245,21 @@ mmap_wrapper(wasm_exec_env_t exec_env, void *addr, int length, int prot,
     if (buf_offset == 0)
         return -1;
 
-    if (fd <= 0)
+    if (fd <= 0) {
+        module_free((uint64)buf_offset);
         return -1;
+    }
 
-    if (lseek(fd, offset, SEEK_SET) == -1)
+    if (lseek(fd, offset, SEEK_SET) == -1) {
+        module_free((uint64)buf_offset);
         return -1;
+    }
 
     size_read = read(fd, buf, length);
-    (void)size_read;
+    if (size_read < 0) {
+        module_free((uint64)buf_offset);
+        return -1;
+    }
     return buf_offset;
 }
 
@@ -261,10 +282,10 @@ getentropy_wrapper(wasm_exec_env_t exec_env, void *buffer, uint32 length)
 {
     if (buffer == NULL)
         return -1;
-#if defined(_DEFAULT_SOURCE) || defined(BH_PLATFORM_LINUX_SGX)
-    return getentropy(buffer, length);
-#else
+#if defined(HAVE_SYSCALL_GETRANDOM)
     return syscall(SYS_getrandom, buffer, length, 0);
+#else
+    return getentropy(buffer, length);
 #endif
 }
 
@@ -496,6 +517,24 @@ emscripten_notify_memory_growth_wrapper(wasm_exec_env_t exec_env, int i)
 }
 
 static void
+emscripten_sleep_wrapper(wasm_exec_env_t exec_env, int timeout_ms)
+{
+    unsigned int sec;
+    useconds_t us;
+
+    if (timeout_ms <= 0)
+        return;
+
+    sec = timeout_ms / 1000;
+    us = (timeout_ms % 1000) * 1000;
+
+    if (sec > 0)
+        sleep(sec);
+    if (us > 0)
+        usleep(us);
+}
+
+static void
 emscripten_thread_sleep_wrapper(wasm_exec_env_t exec_env, double timeout_ms)
 {
     uint64 ms = (uint64)timeout_ms;
@@ -544,6 +583,7 @@ static NativeSymbol native_symbols_libc_emcc[] = {
     REG_NATIVE_FUNC(__sys_getcwd, "(*~)i"),
     REG_NATIVE_FUNC(__sys_uname, "(*)i"),
     REG_NATIVE_FUNC(emscripten_notify_memory_growth, "(i)"),
+    REG_NATIVE_FUNC(emscripten_sleep, "(i)"),
     REG_NATIVE_FUNC(emscripten_thread_sleep, "(F)"),
 #endif /* end of BH_PLATFORM_LINUX_SGX */
 };

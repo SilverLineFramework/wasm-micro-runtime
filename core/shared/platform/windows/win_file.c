@@ -1540,6 +1540,24 @@ create_stdio_handle(HANDLE raw_stdio_handle, DWORD stdio)
     return stdio_handle;
 }
 
+bool
+os_is_stdin_handle(os_file_handle fd)
+{
+    return fd->raw.handle == GetStdHandle(STD_INPUT_HANDLE);
+}
+
+bool
+os_is_stdout_handle(os_file_handle fd)
+{
+    return fd->raw.handle == GetStdHandle(STD_OUTPUT_HANDLE);
+}
+
+bool
+os_is_stderr_handle(os_file_handle fd)
+{
+    return fd->raw.handle == GetStdHandle(STD_ERROR_HANDLE);
+}
+
 os_file_handle
 os_convert_stdin_handle(os_raw_file_handle raw_stdin)
 {
@@ -1740,7 +1758,7 @@ os_closedir(os_dir_stream dir_stream)
     if (!success) {
         DWORD win_error = GetLastError();
 
-        if (win_error = ERROR_INVALID_HANDLE)
+        if (win_error == ERROR_INVALID_HANDLE)
             BH_FREE(dir_stream);
         return convert_windows_error_code(win_error);
     }
@@ -1791,4 +1809,46 @@ os_realpath(const char *path, char *resolved_path)
         return NULL;
 
     return resolved_path;
+}
+
+os_raw_file_handle
+os_invalid_raw_handle(void)
+{
+    return INVALID_HANDLE_VALUE;
+}
+
+bool
+os_compare_file_handle(os_file_handle handle1, os_file_handle handle2)
+{
+    if (handle1->type != handle2->type) {
+        return false;
+    }
+
+    if (handle1->fdflags != handle2->fdflags
+        || handle1->access_mode != handle2->access_mode) {
+        return false;
+    }
+
+    switch (handle1->type) {
+        case windows_handle_type_file:
+            return handle1->raw.handle == handle2->raw.handle;
+        case windows_handle_type_socket:
+            return handle1->raw.socket == handle2->raw.socket;
+        default:
+            // Unknown handle type
+            return false;
+    }
+}
+
+int
+os_ioctl(os_file_handle handle, int request, ...)
+{
+    return BHT_ERROR;
+}
+
+// Should not be called because locked by ifdef.
+int
+os_poll(os_poll_file_handle *fds, os_nfds_t nfs, int timeout)
+{
+    return BHT_ERROR;
 }

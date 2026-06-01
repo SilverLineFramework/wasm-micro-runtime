@@ -17,7 +17,10 @@ extern "C" {
 
 typedef void *mem_allocator_t;
 
+#ifndef GC_FINALIZER_T_DEFINED
+#define GC_FINALIZER_T_DEFINED
 typedef void (*gc_finalizer_t)(void *obj, void *data);
+#endif
 
 mem_allocator_t
 mem_allocator_create(void *mem, uint32_t size);
@@ -42,6 +45,34 @@ mem_allocator_realloc(mem_allocator_t allocator, void *ptr, uint32_t size);
 
 void
 mem_allocator_free(mem_allocator_t allocator, void *ptr);
+
+/* Aligned allocation support */
+#ifndef GC_MIN_ALIGNMENT
+#define GC_MIN_ALIGNMENT 8
+#endif
+
+#if BH_ENABLE_GC_VERIFY == 0
+
+void *
+mem_allocator_malloc_aligned(mem_allocator_t allocator, uint32_t size,
+                             uint32_t alignment);
+
+#define mem_allocator_malloc_aligned_internal(allocator, size, alignment, \
+                                              file, line)                 \
+    mem_allocator_malloc_aligned(allocator, size, alignment)
+
+#else /* BH_ENABLE_GC_VERIFY != 0 */
+
+void *
+mem_allocator_malloc_aligned_internal(mem_allocator_t allocator, uint32_t size,
+                                      uint32_t alignment, const char *file,
+                                      int line);
+
+#define mem_allocator_malloc_aligned(allocator, size, alignment)      \
+    mem_allocator_malloc_aligned_internal(allocator, size, alignment, \
+                                          __FILE__, __LINE__)
+
+#endif /* end of BH_ENABLE_GC_VERIFY */
 
 int
 mem_allocator_migrate(mem_allocator_t allocator, char *pool_buf_new,
