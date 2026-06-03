@@ -1706,9 +1706,6 @@ wasm_runtime_instantiate(WASMModuleCommon *module, uint32 stack_size,
     wasm_runtime_instantiation_args_set_default_stack_size(&args, stack_size);
     wasm_runtime_instantiation_args_set_host_managed_heap_size(&args,
                                                                heap_size);
-#if WASM_ENABLE_LIBC_WALI != 0
-    wali_init_native();
-#endif
     return wasm_runtime_instantiate_internal(module, NULL, NULL, &args,
                                              error_buf, error_buf_size);
 }
@@ -1853,6 +1850,9 @@ wasm_runtime_instantiate_ex2(WASMModuleCommon *module,
                              const struct InstantiationArgs2 *args,
                              char *error_buf, uint32 error_buf_size)
 {
+#if WASM_ENABLE_LIBC_WALI != 0
+    wali_init_native();
+#endif
     return wasm_runtime_instantiate_internal(module, NULL, NULL, args,
                                              error_buf, error_buf_size);
 }

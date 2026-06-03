@@ -94,6 +94,8 @@ void wali_global_init() {
     if (sigaction(SIG_WASM_THREAD_TERM, &act, NULL) == -1) {
         perror("Could not install WALI termination signal\n");
         exit(1);
+    } else {
+        VERB("WALI termination signal installed successfully\n");
     }
 
 }
