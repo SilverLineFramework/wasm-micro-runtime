@@ -24,6 +24,7 @@
 
 #if WASM_ENABLE_LIBC_WALI != 0
 extern int64 proc_exit_primary_tid;
+extern bool proc_exit_invoked;
 #endif
 
 #if WASM_ENABLE_SIMDE != 0

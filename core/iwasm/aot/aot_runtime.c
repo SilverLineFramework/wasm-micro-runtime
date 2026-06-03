@@ -3276,7 +3276,7 @@ bool
 aot_enlarge_memory_with_idx(AOTModuleInstance *module_inst,
                             uint32 inc_page_count, uint32 memidx)
 {
-    return wasm_enlarge_memory_with_idx(module_inst, inc_page_count, memidx);
+    return wasm_enlarge_memory_with_idx(module_inst, inc_page_count, memidx, false);
 }
 
 bool
@@ -3395,7 +3395,7 @@ aot_get_indirect_function(AOTModuleInstance *module_inst, uint32 tbl_idx,
         goto fail;
     }
 
-    tbl_elem_val = (table_elem_type_t *) tbl_inst->elems[table_elem_idx];
+    tbl_elem_val = tbl_inst->elems[table_elem_idx];
     if (tbl_elem_val == NULL_REF) {
         aot_set_exception_with_id(module_inst, EXCE_UNINITIALIZED_ELEMENT);
         goto fail;
